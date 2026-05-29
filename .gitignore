@@ -1,0 +1,38 @@
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.py[cod]
+
+.idea/
+.vscode/
+.codex_tmp_html_e2e/
+tmp*/
+.pytest_cache/
+.uv-cache/
+.codebuddy/
+wei_quiz_rag.egg-info/
+
+# Runtime data / local knowledge base / indexes / eval datasets
+data/
+!data/.gitkeep
+app/ingest/data/
+app/eval/ragas_runs/
+
+*.log
+
+# Frontend local dependencies and build outputs
+frontend/node_modules/
+frontend/dist/
+
+# Local generated artifacts
+*.sqlite
+*.db
+*.parquet
+*.pkl
+*.pickle
+*.onnx
+*.bin
+*.pt
+*.safetensors

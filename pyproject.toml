@@ -1,0 +1,52 @@
+[project]
+name = "wei-quiz-rag"
+version = "0.1.0"
+description = "A local knowledge base Q&A (RAG) application."
+authors = [
+    { name = "Your Name", email = "your.email@example.com" }
+]
+dependencies = [
+    "llama-index",
+    "pydantic-settings",
+    "dashscope",
+    "openai",
+    "llama-index-llms-openai-like",
+    "fastapi",
+    "uvicorn",
+    "chromadb",
+    "llama-index-vector-stores-chroma",
+    "streamlit",
+    "requests",
+    "FlagEmbedding",
+    "llama-index-postprocessor-dashscope-rerank>=0.5.0",
+    "llama-index-llms-ollama>=0.10.1",
+    "llama-index-embeddings-ollama>=0.9.0",
+    "llama-index-retrievers-bm25>=0.7.1",
+    "pymilvus[milvus-lite]>=2.6.10",
+    "llama-index-vector-stores-milvus>=1.1.0",
+    "redis>=7.4.0",
+    "unstructured[pdf]>=0.22.22",
+    "pypdf>=6.9.0",
+    "python-magic-bin>=0.4.14; sys_platform == 'win32'",
+    "python-magic>=0.4.27; sys_platform != 'win32'",
+    "python-multipart>=0.0.20",
+    "sqlalchemy>=2.0.0",
+    "psycopg[binary]>=3.2.0",
+    "pymupdf>=1.24.0",
+    "ragas",
+    "datasets>=4.8.3",
+    "pyjwt>=2.12.1",
+    "mem0ai>=2.0.0b1",
+]
+requires-python = ">=3.11"
+
+[tool.uv]
+# 配置 uv 使用阿里云镜像源
+index-url = "https://mirrors.aliyun.com/pypi/simple" # 修改为阿里云镜像源
+
+[tool.setuptools]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+# 禁用测试 ID 转义，让中文正常显示
+disable_test_id_escaping = true
