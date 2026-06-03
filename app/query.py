@@ -11,7 +11,7 @@ from llama_index.llms.openai_like import OpenAILike
 from llama_index.embeddings.openai import OpenAIEmbedding # 嵌入模型目前保持不变
 from app.ingest.loader import get_chroma_vector_store
 from app.config import settings # 导入你的配置
-from llama_index.retrievers.bm25 import BM25Retriever
+from app.retrieval.bm25_state import build_stateful_bm25_retriever
 from llama_index.core.retrievers import QueryFusionRetriever
 from llama_index.core.query_engine import RetrieverQueryEngine
 # from llama_index.postprocessor.flag_embedding_reranker import FlagEmbeddingReranker
@@ -159,7 +159,7 @@ def setup_hybrid_query_engine():
     print(f"🎉 成功从本地 docstore 加载了 {len(all_nodes)} 个文本节点用于 BM25！")
     vector_retriever = index.as_retriever(similarity_top_k=4)
     # 4. 【核心】创建 BM25Retriever
-    bm25_retriever = BM25Retriever.from_defaults(
+    bm25_retriever = build_stateful_bm25_retriever(
         nodes=all_nodes,
         similarity_top_k=4
     )

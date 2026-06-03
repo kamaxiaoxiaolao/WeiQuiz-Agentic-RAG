@@ -8,7 +8,7 @@ WeiQuiz 是一个面向企业知识库场景的 Agentic RAG 问答系统。
 
 一句话描述：
 
-> WeiQuiz 是一个基于 FastAPI、LlamaIndex、Milvus、Redis、PostgreSQL 构建的 Agentic RAG 企业知识库系统，支持文档解析入库、Hybrid Retrieval、Rerank、复杂问题拆解、会话记忆、流式输出和 RAG 过程追踪。
+> WeiQuiz 是一个基于 FastAPI、LlamaIndex、pgvector/Milvus、Redis、PostgreSQL 构建的 Agentic RAG 企业知识库系统，支持文档解析入库、Hybrid Retrieval、Rerank、复杂问题拆解、会话记忆、流式输出和 RAG 过程追踪。
 
 ## 2. 技术栈
 
@@ -16,7 +16,7 @@ WeiQuiz 是一个面向企业知识库场景的 Agentic RAG 问答系统。
 | --- | --- | --- |
 | 后端框架 | FastAPI | 提供认证、聊天、文档管理、流式问答 API |
 | RAG 框架 | LlamaIndex | 文档节点、检索、Query Engine、RAG 组件编排 |
-| 向量数据库 | Milvus | 存储向量节点并执行 ANN 检索 |
+| 向量数据库 | pgvector 默认，Milvus 可选 | 存储向量节点并执行向量检索 |
 | 关键词检索 | BM25 | 补充精确词、编号、状态码、专有名词召回 |
 | 融合排序 | RRF | 融合向量检索与 BM25 检索结果 |
 | 精排模型 | DashScope Rerank | 对候选文档进行二阶段重排序 |
@@ -50,15 +50,15 @@ WeiQuiz 是一个面向企业知识库场景的 Agentic RAG 问答系统。
 | 接口层 | 处理认证、请求校验、SSE 流式响应、错误返回 |
 | AgentController 决策层 | 判断请求走闲聊、澄清、工具调用还是 RAG Workflow |
 | RAG Workflow 执行层 | Query Planning、子问题拆解、多跳检索、质量检查、重写、生成 |
-| 检索与重排层 | Milvus 向量检索、BM25、RRF 融合、Rerank 精排 |
+| 检索与重排层 | pgvector/Milvus 向量检索、BM25、RRF 融合、Rerank 精排 |
 | 文档解析与索引层 | 文档扫描、解析、清洗、切分、metadata、增量入库 |
-| 存储与缓存层 | PostgreSQL、Redis、Milvus 分别保存结构化数据、缓存和向量索引 |
+| 存储与缓存层 | PostgreSQL/pgvector、Redis、可选 Milvus 分别保存结构化数据、缓存和向量索引 |
 
 ## 4. 已实现核心功能
 
 ### 4.1 文档解析与入库
 
-项目支持将本地知识库文档解析为结构化 Block，再转换为 section 级 Document，最后进行层级切分并写入 Milvus 与 PostgreSQL。
+项目支持将本地知识库文档解析为结构化 Block，再转换为 section 级 Document，最后进行层级切分并写入向量库与 PostgreSQL。
 
 已实现能力：
 
@@ -157,7 +157,7 @@ Dense Vector Retrieval + BM25 Sparse Retrieval -> RRF Fusion -> Rerank
 当前检索链路：
 
 1. 对用户问题生成向量。
-2. 使用 Milvus 做向量召回。
+2. 使用 pgvector/Milvus 做向量召回。
 3. 使用 BM25 做关键词召回。
 4. 使用 RRF 融合两路结果。
 5. 使用 Rerank 对候选结果精排。
@@ -438,4 +438,3 @@ WeiQuiz 的链路是：
 4. Web Search / MCP：知识库不足时的外部工具补充。
 5. Mem0 长期语义记忆：跨会话用户偏好与事实记忆。
 6. GraphRAG：实体关系和跨文档推理增强。
-

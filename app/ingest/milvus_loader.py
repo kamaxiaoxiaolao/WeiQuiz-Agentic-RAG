@@ -2,13 +2,12 @@ import json
 import os
 import sys
 from datetime import datetime, timezone
-from typing import List, Dict, Optional
+from typing import Any, List, Dict, Optional
 
 # 强制终端使用 UTF-8 输出，修复中文乱码
 sys.stdout.reconfigure(encoding='utf-8')
 sys.stderr.reconfigure(encoding='utf-8')
 
-from llama_index.vector_stores.milvus import MilvusVectorStore
 from llama_index.core.readers import SimpleDirectoryReader
 from llama_index.core.schema import Document, TextNode, NodeRelationship, RelatedNodeInfo
 from llama_index.core.node_parser import HierarchicalNodeParser, get_leaf_nodes, get_root_nodes
@@ -16,10 +15,12 @@ from llama_index.core import StorageContext, VectorStoreIndex, load_index_from_s
 from llama_index.core.settings import Settings
 from llama_index.llms.openai_like import OpenAILike
 from llama_index.embeddings.openai import OpenAIEmbedding
+from sqlalchemy.engine import make_url
 
 from app.config import settings as app_settings
 from app.ingest.sync import load_state, save_state, diff_docs
 from app.metadata_schema import build_hierarchy_node_metadata
+from app.retrieval.bm25_state import increment_add_bm25_nodes, increment_remove_bm25_nodes
 
 try:
     from app.storage.parent_store import build_parent_store
@@ -548,7 +549,9 @@ def select_index_nodes(nodes: List[TextNode]) -> List[TextNode]:
     return [node for node in nodes if node.metadata.get("chunk_role") == "leaf"]
 
 
-def get_milvus_vector_store(settings: app_settings, index_dir: str, collection_name: str, dim: int = 1536) -> MilvusVectorStore:
+def get_milvus_vector_store(settings: app_settings, index_dir: str, collection_name: str, dim: int = 1536) -> Any:
+    from llama_index.vector_stores.milvus import MilvusVectorStore
+
     os.makedirs(index_dir, exist_ok=True)
     uri = settings.milvus_uri
 
@@ -562,13 +565,51 @@ def get_milvus_vector_store(settings: app_settings, index_dir: str, collection_n
     return vector_store
 
 
+def get_pgvector_vector_store(settings: app_settings, table_name: str, dim: int = 1536) -> Any:
+    from llama_index.vector_stores.postgres import PGVectorStore
+
+    url = make_url(settings.postgres_url)
+    return PGVectorStore.from_params(
+        database=url.database or "weiquiz",
+        host=url.host or "localhost",
+        password=url.password or "",
+        port=url.port or 5432,
+        user=url.username or "postgres",
+        table_name=table_name,
+        embed_dim=dim,
+    )
+
+
+def get_default_vector_store(
+    settings: app_settings,
+    index_dir: str,
+    collection_name: str,
+    dim: int = 1536,
+) -> Any:
+    backend = (settings.vector_store_backend or "pgvector").strip().lower()
+    if backend in {"pgvector", "postgres", "postgresql"}:
+        return get_pgvector_vector_store(
+            settings=settings,
+            table_name=settings.pgvector_table_name,
+            dim=dim,
+        )
+    if backend == "milvus":
+        return get_milvus_vector_store(
+            settings=settings,
+            index_dir=index_dir,
+            collection_name=collection_name,
+            dim=dim,
+        )
+    raise ValueError(f"Unsupported VECTOR_STORE_BACKEND: {settings.vector_store_backend}")
+
+
 def get_or_create_milvus_index(
     settings: app_settings,
     index_dir: str,
     collection_name: str,
     dim: int = 1536
 ) -> VectorStoreIndex:
-    vector_store = get_milvus_vector_store(
+    vector_store = get_default_vector_store(
         settings=settings,
         index_dir=index_dir,
         collection_name=collection_name,
@@ -625,9 +666,9 @@ def safe_delete_doc(index: VectorStoreIndex, doc_id: str):
     try:
         if index.docstore.get_ref_doc_info(doc_id) is not None:
             index.delete_ref_doc(doc_id, delete_from_docstore=True)
-            print(f"    ✅ [Docstore 命中] 成功删除本地记录及 Milvus 对应节点: {doc_id}")
+            print(f"    ✅ [Docstore 命中] 成功删除本地记录及向量库对应节点: {doc_id}")
         else:
-            print(f"    ⚠️ [Docstore 未命中] 本地未记录该文档，触发 Milvus 底层强制删除...")
+            print(f"    ⚠️ [Docstore 未命中] 本地未记录该文档，触发向量库底层强制删除...")
             index.vector_store.delete(doc_id)
             print(f"    ✅ [强制清理完成] 已执行底层向量删除 {doc_id}")
     except Exception as e:
@@ -666,11 +707,13 @@ def apply_diff_to_milvus(
 
     print(f"\n🚀 开始执行增量同步 新增 {len(added_items)}, 更新 {len(updated_items)}, 删除 {len(deleted_items)}")
 
+    old_bm25_nodes = []
     for item in deleted_items:
         doc_id = item["doc_id"]
         report["documents"].append(_report_item(item, "deleted", "success", stage="completed", block_count=0, chunk_count=0))
         print(f"🗑️ [Delete] 正在处理删除文档: {doc_id}")
         if parent_store is not None:
+            old_bm25_nodes.extend(parent_store.list_chunk_nodes([doc_id]))
             parent_store.delete_by_doc_ids([doc_id])
         safe_delete_doc(index, doc_id)
 
@@ -678,8 +721,13 @@ def apply_diff_to_milvus(
         doc_id = item["doc_id"]
         print(f"🔄 [Update-Delete] 正在清理待更新的旧版本文档 {doc_id}")
         if parent_store is not None:
+            old_bm25_nodes.extend(parent_store.list_chunk_nodes([doc_id]))
             parent_store.delete_by_doc_ids([doc_id])
         safe_delete_doc(index, doc_id)
+
+    if old_bm25_nodes:
+        removed = increment_remove_bm25_nodes(old_bm25_nodes)
+        print(f"✅ [BM25State] Removed {removed} old leaf chunks from BM25 statistics")
 
     files_to_index: List[str] = []
     path_to_doc_id: Dict[str, str] = {}
@@ -755,7 +803,7 @@ def apply_diff_to_milvus(
             print(f"元数据:\n{node.metadata}")
             print("--------------------------------------------------\n")
 
-        print(f"✅ [Upsert] 正在将 {len(chunked_nodes)} 个新节点注册到 Docstore 并注入 Milvus...")
+        print(f"✅ [Upsert] 正在将 {len(chunked_nodes)} 个新节点注册到 Docstore 并注入向量库...")
 
         index_nodes = select_index_nodes(chunked_nodes)
         doc_chunk_counters = {}
@@ -788,9 +836,20 @@ def apply_diff_to_milvus(
             index.insert_nodes(index_nodes)
         except Exception as e:
             for item in added_items:
-                report["documents"].append(_report_item(item, "added", "failed", stage="insert_milvus", error=str(e)))
+                report["documents"].append(_report_item(item, "added", "failed", stage="insert_vector_store", error=str(e)))
             for item in updated_items:
-                report["documents"].append(_report_item(item, "updated", "failed", stage="insert_milvus", error=str(e)))
+                report["documents"].append(_report_item(item, "updated", "failed", stage="insert_vector_store", error=str(e)))
+            _finalize_and_save_ingestion_report(report)
+            raise
+
+        try:
+            added_to_bm25 = increment_add_bm25_nodes(index_nodes)
+            print(f"✅ [BM25State] Added {added_to_bm25} new leaf chunks to BM25 statistics")
+        except Exception as e:
+            for item in added_items:
+                report["documents"].append(_report_item(item, "added", "failed", stage="update_bm25_state", error=str(e)))
+            for item in updated_items:
+                report["documents"].append(_report_item(item, "updated", "failed", stage="update_bm25_state", error=str(e)))
             _finalize_and_save_ingestion_report(report)
             raise
 
@@ -833,11 +892,11 @@ def apply_diff_to_milvus(
             raise
 
     _finalize_and_save_ingestion_report(report)
-    print("\nSync completed. PostgreSQL chunk store and Milvus are updated.")
+    print("\nSync completed. PostgreSQL chunk store and vector store are updated.")
 
 
 if __name__ == "__main__":
-    print(f"--- Starting Incremental Milvus Indexing Pipeline ---")
+    print(f"--- Starting Incremental Vector Store Indexing Pipeline ---")
 
     Settings.llm = OpenAILike(
         model=app_settings.llm_model,
@@ -877,4 +936,4 @@ if __name__ == "__main__":
     )
 
     save_state(state_path, next_state)
-    print("--- Milvus Indexing Pipeline Completed ---")
+    print("--- Vector Store Indexing Pipeline Completed ---")

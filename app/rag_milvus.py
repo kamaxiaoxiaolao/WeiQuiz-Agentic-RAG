@@ -7,11 +7,11 @@ from llama_index.core.settings import Settings
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.llms.openai_like import OpenAILike
 from llama_index.postprocessor.dashscope_rerank import DashScopeRerank
-from llama_index.retrievers.bm25 import BM25Retriever
 
 from app.config import settings as app_settings
-from app.ingest.milvus_loader import get_milvus_vector_store
+from app.ingest.milvus_loader import get_default_vector_store
 from app.metadata_schema import SourceNodePayload
+from app.retrieval.bm25_state import build_stateful_bm25_retriever
 from app.retrieval.auto_merging_context import AutoMergingContextPostprocessor
 from app.retrieval.parent_context import ParentContextPostprocessor
 from app.storage.parent_store import build_parent_store
@@ -36,10 +36,11 @@ def setup_llamaindex_settings():
 def build_milvus_index_and_storage() -> Tuple[VectorStoreIndex, StorageContext]:
     setup_llamaindex_settings()
 
-    vector_store = get_milvus_vector_store(
+    vector_store = get_default_vector_store(
         settings=app_settings,
         index_dir=app_settings.index_dir,
         collection_name=app_settings.milvus_collection,
+        dim=app_settings.pgvector_embed_dim,
     )
 
     if app_settings.parent_store_enabled:
@@ -59,10 +60,16 @@ def build_milvus_index_and_storage() -> Tuple[VectorStoreIndex, StorageContext]:
 
 def build_milvus_query_engine(index: VectorStoreIndex, storage_context: StorageContext) -> RetrieverQueryEngine:
     parent_store = build_parent_store(app_settings.postgres_url) if app_settings.parent_store_enabled else None
-    all_nodes = parent_store.list_chunk_nodes() if parent_store is not None else list(storage_context.docstore.docs.values())
+    if parent_store is not None:
+        all_nodes = parent_store.list_chunk_nodes()
+    else:
+        all_nodes = list(storage_context.docstore.docs.values())
 
     vector_retriever = index.as_retriever(similarity_top_k=4)
-    bm25_retriever = BM25Retriever.from_defaults(nodes=all_nodes, similarity_top_k=4)
+    bm25_retriever = build_stateful_bm25_retriever(
+        nodes=all_nodes,
+        similarity_top_k=4,
+    )
 
     fusion_retriever = QueryFusionRetriever(
         [vector_retriever, bm25_retriever],

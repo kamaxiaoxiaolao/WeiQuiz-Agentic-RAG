@@ -30,7 +30,8 @@ import {
   Loader2,
   Pencil,
   Check,
-  X
+  X,
+  DatabaseZap
 } from 'lucide-vue-next'
 
 const props = defineProps<{
@@ -67,7 +68,8 @@ const iconMap: Record<string, any> = {
   'loader-2': Loader2,
   'pencil': Pencil,
   'check': Check,
-  'x': X
+  'x': X,
+  'database-zap': DatabaseZap
 }
 
 const iconComponent = computed(() => {

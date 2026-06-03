@@ -373,6 +373,8 @@ def llm_based_route(query: str) -> RouteResult:
     client = OpenAI(
         api_key=settings.qwen_llm_api_key,
         base_url=settings.router_api_base,
+        timeout=settings.router_timeout_seconds,
+        max_retries=0,
     )
 
     prompt = LLM_ROUTE_PROMPT.format(query=query)

@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     milvus_dir: str = "data/index/milvus" # Milvus 向量数据库存放目录
     milvus_uri: str = "http://localhost:19530" # Milvus 服务地址
     milvus_collection: str = "wei_quiz_collection"
+    vector_store_backend: str = "pgvector"
+    pgvector_table_name: str = "wei_quiz_vectors"
+    pgvector_embed_dim: int = 1536
     test_md_path: str = "data/md/data/md/test.md" # 测试 Markdown 文档路径
     test_md_name: str = "test" # 测试 Markdown 文档名称
     test_pdf_path: str = "data/pdf/test.pdf" # 测试 PDF 文档路径
@@ -37,6 +40,7 @@ class Settings(BaseSettings):
     # 请根据你在百炼开通的具体模型服务进行选择，例如：qwen-turbo, qwen-plus, qwen-max
     llm_model: str = "mimo-v2.5-pro"
     router_model: str = "qwen3.6-flash"
+    router_timeout_seconds: float = 5.0
     
     # Embedding 模型名称，DashScope 通常提供 text-embedding-v1 或 text-embedding-v2
     # LlamaIndex 可以通过 OpenAIEmbedding 类，指向这个 base_url 来使用 DashScope 的 Embedding 服务
@@ -54,6 +58,14 @@ class Settings(BaseSettings):
     auto_merging_enabled: bool = True
     auto_merging_threshold: float = 0.5
     auto_merging_max_chars: int = 4000
+    rerank_enabled: bool = True
+    rerank_min_candidates: int = 6
+    rerank_timeout_seconds: float = 5.0
+    bm25_state_path: str = "data/index/bm25_state.json"
+    bm25_k1: float = 1.5
+    bm25_b: float = 0.75
+    retrieval_cache_enabled: bool = True
+    retrieval_cache_ttl: int = 60 * 60 * 6
 
     # --- Redis 配置 ---
     redis_host: str = "localhost"

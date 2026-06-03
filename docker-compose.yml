@@ -14,7 +14,7 @@ services:
       retries: 5
 
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: weiquiz-postgres
     environment:
       POSTGRES_USER: postgres
@@ -24,6 +24,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d weiquiz"]
       interval: 10s
@@ -33,6 +34,7 @@ services:
   etcd:
     image: quay.io/coreos/etcd:v3.5.18
     container_name: weiquiz-etcd
+    profiles: ["milvus"]
     environment:
       ETCD_AUTO_COMPACTION_MODE: revision
       ETCD_AUTO_COMPACTION_RETENTION: "1000"
@@ -54,6 +56,7 @@ services:
   minio:
     image: minio/minio:RELEASE.2025-04-22T22-12-26Z
     container_name: weiquiz-minio
+    profiles: ["milvus"]
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
@@ -72,6 +75,7 @@ services:
   milvus:
     image: milvusdb/milvus:v2.5.6
     container_name: weiquiz-milvus
+    profiles: ["milvus"]
     command: ["milvus", "run", "standalone"]
     environment:
       ETCD_ENDPOINTS: etcd:2379
@@ -100,7 +104,10 @@ services:
     env_file:
       - .env
     environment:
-      MILVUS_URI: http://milvus:19530
+      VECTOR_STORE_BACKEND: ${VECTOR_STORE_BACKEND:-pgvector}
+      PGVECTOR_TABLE_NAME: ${PGVECTOR_TABLE_NAME:-wei_quiz_vectors}
+      PGVECTOR_EMBED_DIM: ${PGVECTOR_EMBED_DIM:-1536}
+      MILVUS_URI: ${MILVUS_URI:-http://milvus:19530}
       REDIS_HOST: redis
       REDIS_PORT: 6379
       POSTGRES_URL: postgresql+psycopg://postgres:postgres@postgres:5432/weiquiz
@@ -113,8 +120,6 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
-      milvus:
-        condition: service_healthy
 
 volumes:
   redis_data:
@@ -122,4 +127,3 @@ volumes:
   etcd_data:
   minio_data:
   milvus_data:
-

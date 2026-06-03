@@ -5,8 +5,16 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="c46ec194-7980-4bdc-9f15-afcd69936a1a" name="更改" comment="v0.4.0 初步完成整体链路">
+      <change afterPath="$PROJECT_DIR$/docx/agent-rag-learning-and-optimization-roadmap.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.env.example" beforeDir="false" afterPath="$PROJECT_DIR$/.env.example" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/uv.lock" beforeDir="false" afterPath="$PROJECT_DIR$/uv.lock" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/agentic/controller.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/agentic/controller.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/agentic/router.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/agentic/router.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/api.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/api.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/config.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/config.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/ChatPanel.vue" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/ChatPanel.vue" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/DebugPanel.vue" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/DebugPanel.vue" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/views/ChatView.vue" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/views/ChatView.vue" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -39,31 +47,31 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent">{
-  &quot;keyToString&quot;: {
-    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
-    &quot;Python 测试.test_router.TestChitchat 的 Python 测试.executor&quot;: &quot;Run&quot;,
-    &quot;Python 测试.test_router.TestFallback 的 Python 测试.executor&quot;: &quot;Run&quot;,
-    &quot;Python 测试.test_router.TestSqlQuery 的 Python 测试.executor&quot;: &quot;Run&quot;,
-    &quot;Python.eval_retrieval.executor&quot;: &quot;Run&quot;,
-    &quot;Python.milvus_loader.executor&quot;: &quot;Run&quot;,
-    &quot;Python.sync.executor&quot;: &quot;Run&quot;,
-    &quot;RunOnceActivity.OpenProjectViewOnStart&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
-    &quot;WebServerToolWindowFactoryState&quot;: &quot;false&quot;,
-    &quot;git-widget-placeholder&quot;: &quot;master&quot;,
-    &quot;kotlin-language-version-configured&quot;: &quot;true&quot;,
-    &quot;last_opened_file_path&quot;: &quot;D:/study/pycharm/workspace/learn-claude-code-main/projects/flowpilot&quot;,
-    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
-    &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
-    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
-    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
-    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
-    &quot;settings.editor.selected.configurable&quot;: &quot;preferences.pluginManager&quot;,
-    &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "ModuleVcsDetector.initialDetectionPerformed": "true",
+    "Python 测试.test_router.TestChitchat 的 Python 测试.executor": "Run",
+    "Python 测试.test_router.TestFallback 的 Python 测试.executor": "Run",
+    "Python 测试.test_router.TestSqlQuery 的 Python 测试.executor": "Run",
+    "Python.eval_retrieval.executor": "Run",
+    "Python.milvus_loader.executor": "Run",
+    "Python.sync.executor": "Run",
+    "RunOnceActivity.OpenProjectViewOnStart": "true",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "WebServerToolWindowFactoryState": "false",
+    "git-widget-placeholder": "master",
+    "kotlin-language-version-configured": "true",
+    "last_opened_file_path": "D:/study/pycharm/workspace/learn-claude-code-main",
+    "node.js.detected.package.eslint": "true",
+    "node.js.detected.package.tslint": "true",
+    "node.js.selected.package.eslint": "(autodetect)",
+    "node.js.selected.package.tslint": "(autodetect)",
+    "nodejs_package_manager_path": "npm",
+    "settings.editor.selected.configurable": "preferences.pluginManager",
+    "vue.rearranger.settings.migration": "true"
   }
-}</component>
+}]]></component>
   <component name="RecentsManager">
     <key name="MoveFile.RECENT_KEYS">
       <recent name="D:\study\pycharm\workspace\bigModel\docx" />
@@ -294,7 +302,15 @@
       <option name="project" value="LOCAL" />
       <updated>1780038712236</updated>
     </task>
-    <option name="localTasksCounter" value="12" />
+    <task id="LOCAL-00012" summary="v0.4.0 初步完成整体链路">
+      <option name="closed" value="true" />
+      <created>1780052279606</created>
+      <option name="number" value="00012" />
+      <option name="presentableId" value="LOCAL-00012" />
+      <option name="project" value="LOCAL" />
+      <updated>1780052279606</updated>
+    </task>
+    <option name="localTasksCounter" value="13" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">

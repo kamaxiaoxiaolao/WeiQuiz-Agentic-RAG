@@ -40,6 +40,8 @@ const chatContainer = ref<HTMLElement | null>(null)
 const textarea = ref<HTMLTextAreaElement | null>(null)
 const TYPEWRITER_INTERVAL_MS = 18
 const TYPEWRITER_CHARS_PER_TICK = 2
+const STREAM_REQUEST_TIMEOUT_MS = 30000
+const API_BASE = import.meta.env.VITE_API_BASE || (import.meta.env.DEV ? 'http://127.0.0.1:8000' : '')
 
 type TypewriterState = {
   queue: string
@@ -337,17 +339,45 @@ async function sendMessage() {
 
 async function streamChat(value: string, assistantMessage: ChatMessage) {
   const token = localStorage.getItem('weiquiz_token')
-  const response = await fetch('/chat/stream', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify({
-      session_id: props.sessionId,
-      message: value,
-      grounding_mode: groundingMode.value,
-    }),
+  const controller = new AbortController()
+  const timeoutId = window.setTimeout(() => {
+    controller.abort()
+  }, STREAM_REQUEST_TIMEOUT_MS)
+
+  console.debug('[WeiQuiz] stream request start', {
+    sessionId: props.sessionId,
+    message: value,
+    groundingMode: groundingMode.value,
+  })
+
+  let response: Response
+  try {
+    response = await fetch(`${API_BASE}/chat/stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        session_id: props.sessionId,
+        message: value,
+        grounding_mode: groundingMode.value,
+      }),
+    })
+  } catch (error: any) {
+    if (error?.name === 'AbortError') {
+      throw new Error('流式接口 30 秒未返回响应，请检查后端 /chat/stream 是否收到请求。')
+    }
+    throw error
+  } finally {
+    window.clearTimeout(timeoutId)
+  }
+
+  console.debug('[WeiQuiz] stream response', {
+    ok: response.ok,
+    status: response.status,
+    hasBody: Boolean(response.body),
   })
 
   if (!response.ok || !response.body) {
@@ -367,6 +397,7 @@ async function streamChat(value: string, assistantMessage: ChatMessage) {
     const frames = buffer.split('\n\n')
     buffer = frames.pop() || ''
     for (const frame of frames) {
+      console.debug('[WeiQuiz] sse frame', frame.slice(0, 120))
       handleSseFrame(frame, assistantMessage)
     }
     await scrollToBottom()
@@ -557,35 +588,6 @@ function compactSourceTitle(source: any) {
   return title.length > 18 ? `${title.slice(0, 18)}...` : title
 }
 
-function stepIcon(status: string) {
-  if (status === 'done') return 'check'
-  if (status === 'warn') return 'triangle-alert'
-  if (status === 'running') return 'loader-2'
-  if (status === 'skipped') return 'minus'
-  return 'circle'
-}
-
-function stepIconClass(status: string) {
-  if (status === 'done') return 'bg-emerald-500'
-  if (status === 'warn') return 'bg-amber-500'
-  if (status === 'running') return 'bg-indigo-500 animate-pulse'
-  if (status === 'skipped') return 'bg-slate-400'
-  return 'bg-slate-300'
-}
-
-function stepBoxClass(status: string) {
-  if (status === 'done') return 'border-emerald-100 bg-emerald-50/50'
-  if (status === 'warn') return 'border-amber-100 bg-amber-50/60'
-  if (status === 'running') return 'border-indigo-100 bg-indigo-50/60'
-  if (status === 'skipped') return 'border-slate-200 bg-slate-50'
-  return 'border-slate-200 bg-white'
-}
-
-function formatDuration(ms: number) {
-  if (!Number.isFinite(ms)) return '-'
-  if (ms < 1000) return `${ms.toFixed(0)} ms`
-  return `${(ms / 1000).toFixed(2)} s`
-}
 </script>
 
 <template>
@@ -650,46 +652,6 @@ function formatDuration(ms: number) {
               <div v-else class="rounded-2xl rounded-tl-sm border bg-white px-5 py-4 text-sm shadow-lg transition-all"
                    :class="selectedMessageIndex === index ? 'border-indigo-300 shadow-indigo-200/50' : 'border-slate-150 shadow-slate-200/50'">
                 <div class="markdown-body" v-html="renderMarkdown(msg.content)"></div>
-
-              <!-- Agentic RAG Flow -->
-              <div v-if="msg.flowSteps?.length" class="mt-5 rounded-xl bg-slate-50/80 border border-slate-100 p-4">
-                <div class="mb-3 flex items-center gap-2 text-[11px] font-bold uppercase tracking-wide text-indigo-600">
-                  <div class="h-4 w-4 rounded-md bg-indigo-100 flex items-center justify-center">
-                    <Icon name="workflow" class="h-3 w-3" />
-                  </div>
-                  Agentic RAG Trace
-                </div>
-                <div class="grid gap-2.5">
-                  <div
-                    v-for="step in msg.flowSteps"
-                    :key="step.key"
-                    class="rounded-xl border px-4 py-3 transition-all hover:shadow-md"
-                    :class="stepBoxClass(step.status)"
-                  >
-                    <div class="flex items-start gap-3">
-                      <div class="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full text-white shadow-sm" :class="stepIconClass(step.status)">
-                        <Icon :name="stepIcon(step.status)" class="h-3.5 w-3.5" />
-                      </div>
-                      <div class="min-w-0 flex-1">
-                        <div class="flex items-center justify-between gap-2">
-                          <span class="text-xs font-bold text-slate-700">{{ step.title }}</span>
-                          <span v-if="step.duration_ms !== null" class="text-[10px] font-semibold text-slate-400 bg-white/80 px-2 py-0.5 rounded-md">{{ formatDuration(step.duration_ms) }}</span>
-                        </div>
-                        <div class="mt-1.5 text-xs leading-relaxed text-slate-500">{{ step.summary }}</div>
-                        <div v-if="step.items?.length" class="mt-2.5 flex flex-wrap gap-2">
-                          <span
-                            v-for="item in step.items"
-                            :key="item.label"
-                            class="rounded-lg bg-white/90 px-2.5 py-1 text-[10px] font-semibold text-slate-600 ring-1 ring-slate-150"
-                          >
-                            {{ item.label }}: {{ item.value }}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
 
               <!-- Citations -->
               <div v-if="msg.citations?.length" class="mt-4 rounded-xl bg-emerald-50/50 border border-emerald-100 p-4">

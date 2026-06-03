@@ -197,6 +197,8 @@ class AgentController:
             client = OpenAI(
                 api_key=settings.qwen_llm_api_key,
                 base_url=settings.router_api_base,
+                timeout=settings.router_timeout_seconds,
+                max_retries=0,
             )
             response = client.chat.completions.create(
                 model=getattr(settings, "router_model", None) or settings.llm_model,
