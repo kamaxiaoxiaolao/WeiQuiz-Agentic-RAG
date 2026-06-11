@@ -103,7 +103,7 @@ def diff_docs(docs_dir: str, state: dict) -> Tuple[Dict, Dict]:
     old_docs: Dict[str, dict] = state.get("docs", {})
     now = utc_now_iso()
     current: Dict[str, dict] = {}
-    for abs_path in iter_files(docs_dir, exts=[".txt", ".md", ".pdf", ".docx", ".html", ".htm"]):
+    for abs_path in iter_files(docs_dir, exts=[".txt", ".md", ".markdown", ".pdf", ".docx", ".html", ".htm"]):
         rel_path = normalize_rel_path(os.path.relpath(abs_path, "."))
         docs_rel_path = normalize_rel_path(os.path.relpath(abs_path, docs_dir))
         sha = compute_sha256(abs_path)

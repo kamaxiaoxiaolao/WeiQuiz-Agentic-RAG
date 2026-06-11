@@ -14,6 +14,7 @@ from app.metadata_schema import SourceNodePayload
 from app.retrieval.bm25_state import build_stateful_bm25_retriever
 from app.retrieval.auto_merging_context import AutoMergingContextPostprocessor
 from app.retrieval.parent_context import ParentContextPostprocessor
+from app.retrieval.table_context import TableContextPostprocessor
 from app.storage.parent_store import build_parent_store
 
 
@@ -80,7 +81,7 @@ def build_milvus_query_engine(index: VectorStoreIndex, storage_context: StorageC
     )
 
     reranker = DashScopeRerank(
-        model="gte-rerank",
+        model=app_settings.rerank_model,
         top_n=3,
         api_key=app_settings.qwen_llm_api_key,
     )
@@ -96,6 +97,7 @@ def build_milvus_query_engine(index: VectorStoreIndex, storage_context: StorageC
             )
         else:
             node_postprocessors.append(ParentContextPostprocessor(parent_store=parent_store))
+        node_postprocessors.append(TableContextPostprocessor(parent_store=parent_store))
     node_postprocessors.append(reranker)
 
     query_engine = RetrieverQueryEngine.from_args(

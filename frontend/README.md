@@ -1,5 +1,33 @@
-# Vue 3 + TypeScript + Vite
+# WeiQuiz Frontend
 
-This template should help get you started developing with Vue 3 and TypeScript in Vite. The template uses Vue 3 `<script setup>` SFCs, check out the [script setup docs](https://v3.vuejs.org/api/sfc-script-setup.html#sfc-script-setup) to learn more.
+Vue 3 frontend for the WeiQuiz Agentic RAG application.
 
-Learn more about the recommended Project Setup and IDE Support in the [Vue Docs TypeScript Guide](https://vuejs.org/guide/typescript/overview.html#project-setup).
+## Stack
+
+- Vue 3
+- TypeScript
+- Vite
+- Pinia
+- Tailwind CSS
+- lucide-vue-next
+
+## Development
+
+```bash
+npm install
+npm run dev
+```
+
+The frontend expects the FastAPI backend to be available from the same origin in production or proxied during local development.
+
+## Build
+
+```bash
+npm run build
+```
+
+## Main Views
+
+- `LoginView.vue`: authentication entry.
+- `ChatView.vue`: chat workspace with sessions, knowledge-base panel, and debug panel.
+- `AdminView.vue`: admin operations for users and audit-related workflows.

@@ -14,7 +14,7 @@ services:
       retries: 5
 
   postgres:
-    image: pgvector/pgvector:pg16
+    image: postgres:16-alpine
     container_name: weiquiz-postgres
     environment:
       POSTGRES_USER: postgres
@@ -24,7 +24,6 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d weiquiz"]
       interval: 10s
@@ -104,13 +103,15 @@ services:
     env_file:
       - .env
     environment:
-      VECTOR_STORE_BACKEND: ${VECTOR_STORE_BACKEND:-pgvector}
+      VECTOR_STORE_BACKEND: ${VECTOR_STORE_BACKEND:-chroma}
+      CHROMA_DIR: ${CHROMA_DIR:-data/index/chroma}
+      CHROMA_COLLECTION: ${CHROMA_COLLECTION:-wei_quiz_collection}
       PGVECTOR_TABLE_NAME: ${PGVECTOR_TABLE_NAME:-wei_quiz_vectors}
       PGVECTOR_EMBED_DIM: ${PGVECTOR_EMBED_DIM:-1536}
       MILVUS_URI: ${MILVUS_URI:-http://milvus:19530}
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      POSTGRES_URL: postgresql+psycopg://postgres:postgres@postgres:5432/weiquiz
+      POSTGRES_URL: ${POSTGRES_URL:-postgresql+psycopg://postgres:postgres@postgres:5432/weiquiz}
     ports:
       - "8000:8000"
     volumes:

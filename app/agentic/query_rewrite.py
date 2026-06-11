@@ -11,9 +11,7 @@ import re
 from dataclasses import dataclass
 from typing import Optional
 
-from openai import OpenAI
-
-from app.config import settings
+from app.llm import LLMTask, get_llm_gateway
 
 logger = logging.getLogger(__name__)
 
@@ -58,16 +56,11 @@ REWRITE_PROMPT = """你是一个检索查询优化器。将用户问题改写成
 
 def llm_rewrite(query: str) -> Optional[RewriteResult]:
     """LLM 改写查询。"""
-    client = OpenAI(
-        api_key=settings.llm_api_key,
-        base_url=settings.llm_api_base,
-    )
-
     prompt = REWRITE_PROMPT.format(query=query)
 
     try:
-        response = client.chat.completions.create(
-            model=settings.llm_model,
+        response = get_llm_gateway().chat_completion(
+            task=LLMTask.REWRITE,
             messages=[{"role": "user", "content": prompt}],
             temperature=0,
             max_tokens=200,

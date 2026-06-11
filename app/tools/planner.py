@@ -4,9 +4,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
-from openai import OpenAI
-
-from app.config import settings
+from app.llm import LLMTask, get_llm_gateway
 from app.tools.registry import ToolRegistry, ToolSpec
 
 
@@ -34,14 +32,9 @@ def plan_tool_call(
     if not specs:
         return ToolCallPlan(error="no_allowed_tools")
 
-    client = OpenAI(
-        api_key=settings.qwen_llm_api_key,
-        base_url=settings.router_api_base,
-    )
-
     try:
-        response = client.chat.completions.create(
-            model=getattr(settings, "router_model", None) or settings.llm_model,
+        response = get_llm_gateway().chat_completion(
+            task=LLMTask.TOOL_PLANNER,
             messages=[
                 {
                     "role": "system",
@@ -61,7 +54,7 @@ def plan_tool_call(
         message = response.choices[0].message
         tool_calls = getattr(message, "tool_calls", None) or []
         if not tool_calls:
-            return ToolCallPlan(error="llm_returned_no_tool_call")
+            return _fallback_plan(query, specs, "llm_returned_no_tool_call")
 
         function = tool_calls[0].function
         arguments = json.loads(function.arguments or "{}")
@@ -69,9 +62,9 @@ def plan_tool_call(
             return ToolCallPlan(error="tool_arguments_not_object")
         return ToolCallPlan(tool_name=function.name, arguments=arguments)
     except json.JSONDecodeError as exc:
-        return ToolCallPlan(error=f"tool_arguments_json_error:{exc}")
+        return _fallback_plan(query, specs, f"tool_arguments_json_error:{exc}")
     except Exception as exc:
-        return ToolCallPlan(error=f"tool_planner_failed:{exc}")
+        return _fallback_plan(query, specs, f"tool_planner_failed:{exc}")
 
 
 def _filter_specs(registry: ToolRegistry, allowed_tool_names: Iterable[str] | None) -> list[ToolSpec]:
@@ -83,11 +76,28 @@ def _filter_specs(registry: ToolRegistry, allowed_tool_names: Iterable[str] | No
 
 
 def _to_openai_tool(spec: ToolSpec) -> dict[str, Any]:
-    return {
-        "type": "function",
-        "function": {
-            "name": spec.name,
-            "description": spec.description,
-            "parameters": spec.input_schema,
-        },
-    }
+    return spec.to_openai_format()
+
+
+def _fallback_plan(query: str, specs: list[ToolSpec], error: str) -> ToolCallPlan:
+    """Build deterministic arguments when tool planning LLM is unavailable."""
+
+    if len(specs) != 1:
+        return ToolCallPlan(error=error)
+
+    spec = specs[0]
+    if spec.name in {"web_search", "kb_search", "memory_search"}:
+        return ToolCallPlan(
+            tool_name=spec.name,
+            arguments={"query": query},
+            method="rule_fallback",
+            error=error,
+        )
+    if spec.name == "sql_query":
+        return ToolCallPlan(
+            tool_name=spec.name,
+            arguments={"question": query},
+            method="rule_fallback",
+            error=error,
+        )
+    return ToolCallPlan(error=error)

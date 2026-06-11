@@ -9,19 +9,19 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Iterator, List, Optional
+from typing import Any, Iterator, List, Optional
 
 import redis
-from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from openai import OpenAI
 from pydantic import BaseModel
 from llama_index.core.schema import QueryBundle
 from starlette.concurrency import run_in_threadpool
 
 from app.config import settings as app_settings
+from app.llm import LLMTask, get_llm_gateway
 from app.rag_milvus import build_rag_components
 from app.ingest.sync import diff_docs, load_state, save_state
 from app.ingest.milvus_loader import apply_diff_to_milvus
@@ -39,20 +39,37 @@ from app.agentic.grounding import check_answer_grounding, should_run_grounding
 from app.agentic.rag_workflow import WorkflowTrace
 from app.metadata_schema import SourceNodePayload
 from app.retrieval.cache import RetrievalCache
+from app.observability import add_span_event, set_span_attributes, setup_observability, start_span
 from app.services.memory_service import MemoryService
 from app.services.long_term_memory_service import LongTermMemoryService
 from app.tools import ToolRegistry, build_default_tool_registry
 from app.auth.router import router as auth_router
 from app.auth.repository import (
+    create_knowledge_job,
+    create_audit_log,
+    create_user,
     init_tables,
     get_db,
     get_chat_session,
+    get_session_factory,
+    get_user_by_email,
+    get_user_by_id,
+    get_user_by_username,
     create_chat_session,
+    list_knowledge_documents,
+    list_knowledge_jobs,
+    list_audit_logs,
+    list_users,
     list_user_sessions,
     list_chat_messages,
+    mark_knowledge_document_deleted,
     soft_delete_session,
+    update_knowledge_job,
+    update_user,
     update_session_last_message,
+    upsert_knowledge_document,
 )
+from app.auth.security import hash_password
 from app.auth.dependencies import get_current_user, require_admin
 from app.storage.auth_models import User, ChatSession
 from sqlalchemy.orm import Session
@@ -63,11 +80,48 @@ MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 _ingest_lock = threading.Lock()
 INGEST_JOB_TTL = 60 * 60 * 24
 WORKFLOW_RETRIEVAL_TIMEOUT_SECONDS = 20
-LIGHTWEIGHT_CHAT_TIMEOUT_SECONDS = 30
 
 
 def _ingest_job_key(job_id: str) -> str:
     return f"rag:ingest:job:{job_id}"
+
+
+def _docs_root() -> Path:
+    return Path(app_settings.docs_dir).resolve()
+
+
+def _index_state_path() -> Path:
+    return Path(app_settings.index_dir) / "ingest_state.json"
+
+
+def _safe_docs_file_path(filename: str) -> Path:
+    safe_name = _safe_upload_filename(filename)
+    docs_dir = _docs_root()
+    target = (docs_dir / safe_name).resolve()
+    if target.parent != docs_dir:
+        raise HTTPException(status_code=400, detail="invalid document path")
+    return target
+
+
+def _safe_docs_relative_path(document_path: str) -> Path:
+    normalized = (document_path or "").replace("\\", "/").strip("/")
+    if not normalized:
+        raise HTTPException(status_code=400, detail="document path is required")
+    if "\x00" in normalized:
+        raise HTTPException(status_code=400, detail="invalid document path")
+
+    relative = Path(normalized)
+    if relative.is_absolute() or any(part in {"", ".", ".."} for part in relative.parts):
+        raise HTTPException(status_code=400, detail="invalid document path")
+    if relative.suffix.lower() not in SUPPORTED_UPLOAD_EXTS:
+        allowed = ", ".join(sorted(SUPPORTED_UPLOAD_EXTS))
+        raise HTTPException(status_code=400, detail=f"unsupported file type: {relative.suffix}; allowed: {allowed}")
+
+    docs_dir = _docs_root()
+    target = (docs_dir / relative).resolve()
+    if docs_dir != target and docs_dir not in target.parents:
+        raise HTTPException(status_code=400, detail="invalid document path")
+    return target
 
 
 def _schedule_memory_compression(
@@ -85,50 +139,6 @@ def _schedule_memory_compression(
     )
 
 
-def _should_write_long_term_memory(user_message: str, assistant_answer: str) -> bool:
-    user_text = (user_message or "").strip()
-    assistant_text = (assistant_answer or "").strip()
-    if not user_text or not assistant_text:
-        return False
-    if _is_low_value_long_term_memory_content(assistant_text):
-        return False
-
-    explicit_memory_markers = (
-        "记住",
-        "请记住",
-        "帮我记住",
-        "remember",
-    )
-    long_term_markers = (
-        "我的目标",
-        "我的偏好",
-        "我希望",
-        "我正在",
-        "我当前",
-        "以后",
-        "下次",
-        "项目是",
-        "系统是",
-        "架构是",
-        "当前记忆系统",
-    )
-    return any(marker in user_text for marker in explicit_memory_markers + long_term_markers)
-
-
-def _is_low_value_long_term_memory_content(content: str) -> bool:
-    low_value_markers = (
-        "[error]",
-        "Answer generation failed",
-        "Request timed out",
-        "无法回答",
-        "知识库内容不相关",
-        "完全不相关",
-        "缺少相关信息",
-        "没有任何关于",
-    )
-    return any(marker in content for marker in low_value_markers)
-
-
 def _schedule_long_term_memory_add(
     background_tasks: BackgroundTasks,
     long_term_memory_service: LongTermMemoryService,
@@ -136,7 +146,7 @@ def _schedule_long_term_memory_add(
     user_message: str,
     assistant_answer: str,
 ) -> None:
-    if not _should_write_long_term_memory(user_message, assistant_answer):
+    if not long_term_memory_service.should_write(user_message, assistant_answer):
         return
     if app_settings.mem0_async_add:
         background_tasks.add_task(
@@ -181,13 +191,8 @@ def _stream_lightweight_chat(message: str, memory_context) -> Iterator[str]:
         f"{format_memory_context(memory_context)}"
         f"【用户输入】\n{message}"
     )
-    client = OpenAI(
-        api_key=app_settings.llm_api_key,
-        base_url=app_settings.llm_api_base,
-        timeout=LIGHTWEIGHT_CHAT_TIMEOUT_SECONDS,
-    )
-    response = client.chat.completions.create(
-        model=app_settings.llm_model,
+    response = get_llm_gateway().stream_chat_completion(
+        task=LLMTask.LIGHTWEIGHT_CHAT,
         messages=[
             {
                 "role": "system",
@@ -196,7 +201,6 @@ def _stream_lightweight_chat(message: str, memory_context) -> Iterator[str]:
             {"role": "user", "content": prompt},
         ],
         temperature=0.2,
-        stream=True,
     )
     for chunk in response:
         if not chunk.choices:
@@ -211,6 +215,17 @@ def _stream_lightweight_chat(message: str, memory_context) -> Iterator[str]:
 async def lifespan(app: FastAPI):
     print("=" * 60)
     print("🚀 FastAPI 服务启动中，初始化 RAG 组件...")
+    observability_status = setup_observability()
+    app.state.observability = observability_status
+    if observability_status.enabled:
+        print(
+            "✅ Phoenix tracing 已启用："
+            f"project={observability_status.project_name}, endpoint={observability_status.endpoint}"
+        )
+    elif observability_status.error:
+        print(f"⚠️ Observability 未启用：{observability_status.error}")
+    else:
+        print("ℹ️ Observability 未启用：OBSERVABILITY_ENABLED=false")
     index, retriever, reranker, query_engine = build_rag_components()
     app.state.index = index
     app.state.retriever = retriever
@@ -285,6 +300,21 @@ class ChatRequest(BaseModel):
     grounding_mode: str = "off"
 
 
+class AdminUserUpdateRequest(BaseModel):
+    display_name: Optional[str] = None
+    email: Optional[str] = None
+    role: Optional[str] = None
+    status: Optional[str] = None
+
+
+class AdminUserCreateRequest(BaseModel):
+    username: str
+    password: str
+    display_name: Optional[str] = None
+    email: Optional[str] = None
+    role: str = "user"
+
+
 def _route_payload(route: RouteResult) -> dict:
     return {
         "intent": route.intent.value,
@@ -329,6 +359,74 @@ def _controller_decision_payload(decision: AgentDecision) -> dict:
             "error": tool_plan.error,
         },
     }
+
+
+def _user_payload(user: User) -> dict:
+    return {
+        "id": user.id,
+        "username": user.username,
+        "display_name": user.display_name,
+        "email": user.email,
+        "role": user.role,
+        "status": user.status,
+        "created_at": user.created_at.isoformat() if user.created_at else None,
+        "updated_at": user.updated_at.isoformat() if user.updated_at else None,
+        "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None,
+    }
+
+
+def _client_ip(request: Request | None) -> str | None:
+    if request is None or request.client is None:
+        return None
+    forwarded = request.headers.get("x-forwarded-for") if request.headers else None
+    if forwarded:
+        return forwarded.split(",", 1)[0].strip()
+    return request.client.host
+
+
+def _audit_payload(row) -> dict:
+    return {
+        "id": row.id,
+        "actor_user_id": row.actor_user_id,
+        "actor_username": row.actor_username,
+        "action": row.action,
+        "resource_type": row.resource_type,
+        "resource_id": row.resource_id,
+        "resource_name": row.resource_name,
+        "status": row.status,
+        "detail": row.detail_json or {},
+        "ip_address": row.ip_address,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+    }
+
+
+def _write_audit_log(
+    db: Session,
+    *,
+    actor: User,
+    action: str,
+    resource_type: str,
+    resource_id: str | None = None,
+    resource_name: str | None = None,
+    status: str = "succeeded",
+    detail: dict | None = None,
+    request: Request | None = None,
+) -> None:
+    try:
+        create_audit_log(
+            db,
+            actor_user_id=actor.id,
+            actor_username=actor.username,
+            action=action,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            resource_name=resource_name,
+            status=status,
+            detail_json=detail or {},
+            ip_address=_client_ip(request),
+        )
+    except Exception as exc:
+        print(f"[AuditLog] write failed action={action} resource={resource_type}:{resource_id} error={exc}")
 
 
 def _source_node_payload(node) -> dict:
@@ -485,7 +583,7 @@ def _tool_registry() -> ToolRegistry:
     return registry
 
 
-def _handle_tool_call_decision(decision, query: str, current_user: User, route_ms: float) -> tuple[str, dict]:
+async def _handle_tool_call_decision(decision, query: str, current_user: User, route_ms: float) -> tuple[str, dict]:
     trace = _route_only_trace(decision.route, query, quality="tool_call")
     trace["controller_decision"] = _controller_decision_payload(decision)
     trace["timings"] = {"router_ms": route_ms}
@@ -507,7 +605,7 @@ def _handle_tool_call_decision(decision, query: str, current_user: User, route_m
         answer = f"当前问题已进入工具调用链路，但 Tool Planner 没有生成有效工具调用：{tool_plan.error}"
         return answer, trace
 
-    tool_result = _tool_registry().call(tool_plan.tool_name, tool_plan.arguments, user=current_user)
+    tool_result = await _tool_registry().call_async(tool_plan.tool_name, tool_plan.arguments, user=current_user)
     trace["tool_call"] = {
         "tool_name": tool_result.tool_name,
         "success": tool_result.success,
@@ -530,6 +628,203 @@ def _handle_tool_call_decision(decision, query: str, current_user: User, route_m
 @app.get("/health")
 async def health_check():
     return {"status": "ok"}
+
+
+@app.get("/admin/users")
+async def admin_list_users(
+    keyword: str = "",
+    role: str = "",
+    status: str = "",
+    page: int = 1,
+    page_size: int = 50,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    safe_page = max(1, page)
+    safe_page_size = max(1, min(page_size, 100))
+    users, total = list_users(
+        db,
+        keyword=keyword.strip(),
+        role=role.strip(),
+        status=status.strip(),
+        limit=safe_page_size,
+        offset=(safe_page - 1) * safe_page_size,
+    )
+    return {
+        "users": [_user_payload(user) for user in users],
+        "total": total,
+        "page": safe_page,
+        "page_size": safe_page_size,
+    }
+
+
+@app.post("/admin/users")
+async def admin_create_user(
+    http_request: Request,
+    request: AdminUserCreateRequest,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    username = request.username.strip()
+    if not username:
+        raise HTTPException(status_code=400, detail="username is required")
+    if len(request.password or "") < 6:
+        raise HTTPException(status_code=400, detail="password must be at least 6 characters")
+    if request.role not in {"admin", "user"}:
+        raise HTTPException(status_code=400, detail="role must be admin or user")
+    if get_user_by_username(db, username):
+        raise HTTPException(status_code=409, detail="username already exists")
+    email = (request.email or "").strip() or None
+    if email and get_user_by_email(db, email):
+        raise HTTPException(status_code=409, detail="email already exists")
+
+    user = create_user(
+        db=db,
+        user_id=f"usr_{uuid.uuid4().hex[:16]}",
+        username=username,
+        password_hash=hash_password(request.password),
+        display_name=request.display_name or username,
+        email=email,
+        role=request.role,
+    )
+    _write_audit_log(
+        db,
+        actor=admin,
+        action="user.create",
+        resource_type="user",
+        resource_id=user.id,
+        resource_name=user.username,
+        detail={"role": user.role, "status": user.status, "email": user.email},
+        request=http_request,
+    )
+    return _user_payload(user)
+
+
+@app.get("/admin/audit-logs")
+async def admin_list_audit_logs(
+    action: str = "",
+    actor: str = "",
+    resource_type: str = "",
+    status: str = "",
+    page: int = 1,
+    page_size: int = 50,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    safe_page = max(1, page)
+    safe_page_size = max(1, min(page_size, 100))
+    rows, total = list_audit_logs(
+        db,
+        action=action.strip(),
+        actor=actor.strip(),
+        resource_type=resource_type.strip(),
+        status=status.strip(),
+        limit=safe_page_size,
+        offset=(safe_page - 1) * safe_page_size,
+    )
+    return {
+        "logs": [_audit_payload(row) for row in rows],
+        "total": total,
+        "page": safe_page,
+        "page_size": safe_page_size,
+    }
+
+
+@app.get("/admin/overview")
+async def admin_overview(
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    _, total_users = list_users(db, limit=1)
+    _, admin_users = list_users(db, role="admin", limit=1)
+    _, disabled_users = list_users(db, status="disabled", limit=1)
+
+    _sync_knowledge_documents_from_filesystem(db)
+    documents, total_documents = list_knowledge_documents(db, status="active", limit=10000)
+    jobs = list_knowledge_jobs(db, 8)
+    failed_jobs = sum(1 for job in jobs if job.status == "failed")
+    running_jobs = sum(1 for job in jobs if job.status in {"pending", "running"})
+
+    return {
+        "users": {
+            "total": total_users,
+            "admins": admin_users,
+            "disabled": disabled_users,
+            "active": max(0, total_users - disabled_users),
+        },
+        "knowledge": {
+            "total_documents": total_documents,
+            "indexed_documents": sum(1 for doc in documents if doc.indexed_status == "indexed"),
+            "pending_documents": sum(1 for doc in documents if doc.indexed_status != "indexed"),
+            "total_size": sum(int(doc.file_size or 0) for doc in documents),
+            "file_types": sorted({str(doc.file_type or "").lstrip(".") for doc in documents if doc.file_type}),
+        },
+        "jobs": {
+            "recent_total": len(jobs),
+            "running": running_jobs,
+            "failed": failed_jobs,
+            "latest": [_serialize_knowledge_job(job) for job in jobs],
+        },
+    }
+
+
+@app.put("/admin/users/{user_id}")
+async def admin_update_user(
+    http_request: Request,
+    user_id: str,
+    request: AdminUserUpdateRequest,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    user = get_user_by_id(db, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="user not found")
+
+    role = request.role
+    if role is not None and role not in {"admin", "user"}:
+        raise HTTPException(status_code=400, detail="role must be admin or user")
+
+    user_status = request.status
+    if user_status is not None and user_status not in {"active", "disabled"}:
+        raise HTTPException(status_code=400, detail="status must be active or disabled")
+
+    if user.id == admin.id and user_status == "disabled":
+        raise HTTPException(status_code=400, detail="cannot disable yourself")
+    if user.id == admin.id and role == "user":
+        raise HTTPException(status_code=400, detail="cannot remove your own admin role")
+
+    before = {
+        "display_name": user.display_name,
+        "email": user.email,
+        "role": user.role,
+        "status": user.status,
+    }
+    updated = update_user(
+        db,
+        user,
+        display_name=request.display_name,
+        email=request.email,
+        role=role,
+        status=user_status,
+    )
+    after = {
+        "display_name": updated.display_name,
+        "email": updated.email,
+        "role": updated.role,
+        "status": updated.status,
+    }
+    changed = {key: {"before": before[key], "after": after[key]} for key in before if before[key] != after[key]}
+    _write_audit_log(
+        db,
+        actor=admin,
+        action="user.update",
+        resource_type="user",
+        resource_id=updated.id,
+        resource_name=updated.username,
+        detail={"changed": changed},
+        request=http_request,
+    )
+    return _user_payload(updated)
 
 
 @app.post("/query")
@@ -651,6 +946,195 @@ def _load_ingest_job(r: redis.Redis, job_id: str) -> Optional[dict]:
     return json.loads(raw)
 
 
+def _list_ingest_jobs(r: redis.Redis, limit: int = 20) -> list[dict]:
+    jobs: list[dict] = []
+    for key in r.scan_iter(_ingest_job_key("*"), count=100):
+        raw = r.get(key)
+        if not raw:
+            continue
+        try:
+            jobs.append(json.loads(raw))
+        except Exception:
+            continue
+    jobs.sort(key=lambda item: float(item.get("created_at") or item.get("updated_at") or 0), reverse=True)
+    return jobs[:limit]
+
+
+def _document_state_lookup() -> dict[str, dict]:
+    state_path = _index_state_path()
+    if not state_path.exists():
+        return {}
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(state, dict):
+        return {}
+
+    candidates: list[Any] = []
+    for key in ("docs", "documents", "files"):
+        value = state.get(key)
+        if isinstance(value, dict):
+            candidates.extend(value.values())
+        elif isinstance(value, list):
+            candidates.extend(value)
+
+    lookup: dict[str, dict] = {}
+    docs_dir = _docs_root()
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        raw_path = str(item.get("path") or item.get("file_path") or item.get("source") or "")
+        raw_name = str(item.get("filename") or item.get("file_name") or Path(raw_path).name)
+        if raw_name:
+            lookup[raw_name] = item
+        if raw_path:
+            normalized_path = raw_path.replace("\\", "/")
+            lookup[normalized_path] = item
+            lookup[Path(normalized_path).name] = item
+            try:
+                raw_abs = Path(raw_path).resolve()
+                lookup[raw_abs.relative_to(docs_dir).as_posix()] = item
+            except Exception:
+                pass
+            try:
+                lookup[Path(raw_path).relative_to(Path(app_settings.docs_dir)).as_posix()] = item
+            except Exception:
+                pass
+    return lookup
+
+
+def _document_payload(path: Path, docs_dir: Path, state_lookup: dict[str, dict]) -> dict:
+    stat = path.stat()
+    relative_path = path.relative_to(docs_dir).as_posix()
+    state = (
+        state_lookup.get(relative_path)
+        or state_lookup.get(str(path).replace("\\", "/"))
+        or state_lookup.get(path.name)
+        or {}
+    )
+    indexed_at = state.get("indexed_at") or state.get("updated_at") or state.get("mtime")
+    status = "indexed" if state else "pending"
+    return {
+        "id": relative_path,
+        "relative_path": relative_path,
+        "filename": path.name,
+        "title": path.stem,
+        "file_type": path.suffix.lower().lstrip("."),
+        "file_size": stat.st_size,
+        "updated_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+        "status": status,
+        "indexed_at": indexed_at,
+        "chunk_count": int(state.get("chunk_count") or state.get("chunks") or 0),
+        "metadata": state,
+    }
+
+
+def _serialize_knowledge_document(row) -> dict:
+    return {
+        "id": row.id,
+        "relative_path": row.relative_path,
+        "filename": row.filename,
+        "title": Path(row.filename).stem,
+        "file_type": str(row.file_type or "").lstrip("."),
+        "file_size": row.file_size or 0,
+        "status": row.indexed_status,
+        "document_status": row.status,
+        "indexed_at": row.last_ingested_at.isoformat() if row.last_ingested_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        "chunk_count": row.chunk_count or 0,
+        "token_count": row.token_count or 0,
+        "uploaded_by": row.uploaded_by,
+        "last_ingest_job_id": row.last_ingest_job_id,
+        "metadata": row.metadata_json or {},
+    }
+
+
+def _serialize_knowledge_job(row) -> dict:
+    return {
+        "job_id": row.id,
+        "status": row.status,
+        "trigger_type": row.trigger_type,
+        "created_by": row.created_by,
+        "saved_files": row.saved_files or [],
+        "result": row.result_json,
+        "report": row.report_json,
+        "error": row.error,
+        "created_at": row.created_at.timestamp() if row.created_at else None,
+        "updated_at": row.updated_at.timestamp() if row.updated_at else None,
+        "started_at": row.started_at.timestamp() if row.started_at else None,
+        "finished_at": row.finished_at.timestamp() if row.finished_at else None,
+    }
+
+
+def _sync_knowledge_documents_from_filesystem(db: Session, uploaded_by: str | None = None, job_id: str | None = None) -> None:
+    docs_dir = _docs_root()
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    state_lookup = _document_state_lookup()
+    now = datetime.utcnow()
+    seen_paths: set[str] = set()
+    for path in docs_dir.rglob("*"):
+        if not path.is_file() or path.suffix.lower() not in SUPPORTED_UPLOAD_EXTS:
+            continue
+        payload = _document_payload(path, docs_dir, state_lookup)
+        metadata = payload.get("metadata") or {}
+        relative_path = payload["relative_path"]
+        seen_paths.add(relative_path)
+        upsert_knowledge_document(
+            db,
+            relative_path=relative_path,
+            filename=payload["filename"],
+            file_type=payload["file_type"],
+            file_size=payload["file_size"],
+            sha256=metadata.get("sha256"),
+            doc_id=metadata.get("doc_id"),
+            indexed_status="indexed" if metadata else "pending",
+            uploaded_by=uploaded_by,
+            last_ingest_job_id=job_id,
+            metadata_json=metadata,
+            last_ingested_at=now if metadata else None,
+        )
+
+    rows, _ = list_knowledge_documents(db, status="active", limit=10000)
+    for row in rows:
+        if row.relative_path not in seen_paths:
+            mark_knowledge_document_deleted(db, row.relative_path, job_id=job_id)
+
+
+def _library_payload(r: redis.Redis | None = None, limit_jobs: int = 10, db: Session | None = None) -> dict:
+    docs_dir = _docs_root()
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    if db is not None:
+        _sync_knowledge_documents_from_filesystem(db)
+        rows, total = list_knowledge_documents(db, status="active", limit=10000)
+        documents = [_serialize_knowledge_document(row) for row in rows]
+        db_jobs = [_serialize_knowledge_job(row) for row in list_knowledge_jobs(db, limit_jobs)]
+    else:
+        state_lookup = _document_state_lookup()
+        documents = [
+            _document_payload(path, docs_dir, state_lookup)
+            for path in sorted(docs_dir.rglob("*"), key=lambda item: item.stat().st_mtime, reverse=True)
+            if path.is_file() and path.suffix.lower() in SUPPORTED_UPLOAD_EXTS
+        ]
+        total = len(documents)
+        db_jobs = []
+    latest_report = _load_latest_ingestion_report()
+    jobs = db_jobs or (_list_ingest_jobs(r, limit_jobs) if r is not None else [])
+    total_size = sum(int(doc["file_size"]) for doc in documents)
+    return {
+        "documents": documents,
+        "jobs": jobs,
+        "report": latest_report,
+        "stats": {
+            "total_documents": total,
+            "indexed_documents": sum(1 for doc in documents if doc["status"] == "indexed"),
+            "pending_documents": sum(1 for doc in documents if doc["status"] != "indexed"),
+            "total_size": total_size,
+            "supported_types": sorted(ext.lstrip(".") for ext in SUPPORTED_UPLOAD_EXTS),
+        },
+    }
+
+
 def _run_ingest_job(job_id: str) -> None:
     r = getattr(app.state, "redis", None)
     if r is None:
@@ -658,6 +1142,11 @@ def _run_ingest_job(job_id: str) -> None:
 
     current = _load_ingest_job(r, job_id) or {}
     _save_ingest_job(r, job_id, {**current, "status": "running", "error": None})
+    db = get_session_factory()()
+    try:
+        update_knowledge_job(db, job_id, status="running", error="")
+    finally:
+        db.close()
 
     try:
         result = _run_incremental_ingestion_and_refresh()
@@ -674,6 +1163,19 @@ def _run_ingest_job(job_id: str) -> None:
                 "error": None,
             },
         )
+        db = get_session_factory()()
+        try:
+            update_knowledge_job(
+                db,
+                job_id,
+                status="succeeded",
+                result_json=result,
+                report_json=report,
+                error="",
+            )
+            _sync_knowledge_documents_from_filesystem(db, job_id=job_id)
+        finally:
+            db.close()
     except Exception as e:
         report = _load_latest_ingestion_report()
         current = _load_ingest_job(r, job_id) or {}
@@ -688,24 +1190,29 @@ def _run_ingest_job(job_id: str) -> None:
                 "error": str(e),
             },
         )
+        db = get_session_factory()()
+        try:
+            update_knowledge_job(
+                db,
+                job_id,
+                status="failed",
+                result_json=None,
+                report_json=report,
+                error=str(e),
+            )
+        finally:
+            db.close()
 
 
-@app.post("/documents/upload")
-async def upload_documents(
+def _create_ingest_job(
+    r: redis.Redis,
+    saved_files: list[dict],
     background_tasks: BackgroundTasks,
-    files: List[UploadFile] = File(...),
-    admin: User = Depends(require_admin),
-):
-    if not files:
-        raise HTTPException(status_code=400, detail="at least one file is required")
-
-    r = _redis_or_503()
-    saved_files = []
-    for file in files:
-        filename = _safe_upload_filename(file.filename or "")
-        content = await file.read()
-        saved_files.append(await run_in_threadpool(_save_upload_file, filename, content))
-
+    *,
+    trigger_type: str,
+    created_by: str | None,
+    db: Session,
+) -> str:
     job_id = uuid.uuid4().hex
     _save_ingest_job(
         r,
@@ -720,14 +1227,115 @@ async def upload_documents(
             "error": None,
         },
     )
+    create_knowledge_job(
+        db,
+        job_id=job_id,
+        trigger_type=trigger_type,
+        created_by=created_by,
+        saved_files=saved_files,
+    )
     background_tasks.add_task(_run_ingest_job, job_id)
+    return job_id
 
+
+@app.post("/documents/upload")
+async def upload_documents(
+    http_request: Request,
+    background_tasks: BackgroundTasks,
+    files: List[UploadFile] = File(...),
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    if not files:
+        raise HTTPException(status_code=400, detail="at least one file is required")
+
+    r = _redis_or_503()
+    saved_files = []
+    for file in files:
+        filename = _safe_upload_filename(file.filename or "")
+        content = await file.read()
+        saved_files.append(await run_in_threadpool(_save_upload_file, filename, content))
+
+    job_id = _create_ingest_job(
+        r,
+        saved_files,
+        background_tasks,
+        trigger_type="upload",
+        created_by=admin.id,
+        db=db,
+    )
+    for item in saved_files:
+        relative_path = Path(item["path"]).name
+        upsert_knowledge_document(
+            db,
+            relative_path=relative_path,
+            filename=item["file_name"],
+            file_type=Path(item["file_name"]).suffix.lower().lstrip("."),
+            file_size=item["file_size"],
+            indexed_status="pending",
+            uploaded_by=admin.id,
+            last_ingest_job_id=job_id,
+            metadata_json={"source": "upload"},
+        )
+
+    _write_audit_log(
+        db,
+        actor=admin,
+        action="knowledge.upload",
+        resource_type="knowledge_job",
+        resource_id=job_id,
+        resource_name="upload documents",
+        detail={
+            "saved_files": [
+                {"file_name": item.get("file_name"), "file_size": item.get("file_size")}
+                for item in saved_files
+            ],
+        },
+        request=http_request,
+    )
     return {
         "ok": True,
         "job_id": job_id,
         "status": "pending",
         "saved_files": saved_files,
     }
+
+
+@app.get("/documents/library")
+async def get_document_library(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    r = getattr(app.state, "redis", None)
+    payload = _library_payload(r, db=db)
+    can_manage = current_user.role == "admin"
+    payload["permissions"] = {
+        "can_read": True,
+        "can_manage": can_manage,
+        "can_upload": can_manage,
+        "can_delete": can_manage,
+        "can_reindex": can_manage,
+        "can_view_jobs": can_manage,
+    }
+    if not can_manage:
+        payload["jobs"] = []
+        payload["report"] = None
+        for doc in payload.get("documents") or []:
+            doc.pop("metadata", None)
+            doc.pop("uploaded_by", None)
+            doc.pop("last_ingest_job_id", None)
+    return payload
+
+
+@app.get("/documents/jobs")
+async def list_document_jobs(
+    limit: int = 20,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    r = _redis_or_503()
+    db_jobs = [_serialize_knowledge_job(row) for row in list_knowledge_jobs(db, max(1, min(limit, 100)))]
+    return {"jobs": db_jobs or _list_ingest_jobs(r, max(1, min(limit, 100)))}
 
 
 @app.get("/documents/jobs/{job_id}")
@@ -740,6 +1348,82 @@ async def get_ingest_job(
     if job is None:
         raise HTTPException(status_code=404, detail="ingestion job not found")
     return job
+
+
+@app.post("/documents/reindex")
+async def reindex_documents(
+    http_request: Request,
+    background_tasks: BackgroundTasks,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    r = _redis_or_503()
+    job_id = _create_ingest_job(
+        r,
+        [],
+        background_tasks,
+        trigger_type="reindex",
+        created_by=admin.id,
+        db=db,
+    )
+    _write_audit_log(
+        db,
+        actor=admin,
+        action="knowledge.reindex",
+        resource_type="knowledge_job",
+        resource_id=job_id,
+        resource_name="reindex",
+        detail={},
+        request=http_request,
+    )
+    return {"ok": True, "job_id": job_id, "status": "pending"}
+
+
+@app.delete("/documents/files/{document_path:path}")
+async def delete_document_file(
+    http_request: Request,
+    document_path: str,
+    background_tasks: BackgroundTasks,
+    reindex: bool = True,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    target = _safe_docs_relative_path(document_path)
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="document not found")
+
+    file_info = {
+        "file_name": target.name,
+        "relative_path": target.relative_to(_docs_root()).as_posix(),
+        "path": str(target).replace("\\", "/"),
+        "file_size": target.stat().st_size,
+    }
+    target.unlink()
+
+    job_id = None
+    if reindex:
+        r = _redis_or_503()
+        job_id = _create_ingest_job(
+            r,
+            [],
+            background_tasks,
+            trigger_type="delete",
+            created_by=admin.id,
+            db=db,
+        )
+    mark_knowledge_document_deleted(db, file_info["relative_path"], job_id=job_id)
+    _write_audit_log(
+        db,
+        actor=admin,
+        action="knowledge.delete",
+        resource_type="knowledge_document",
+        resource_id=file_info["relative_path"],
+        resource_name=file_info["file_name"],
+        detail={"deleted": file_info, "reindex_job_id": job_id},
+        request=http_request,
+    )
+
+    return {"ok": True, "deleted": file_info, "reindex_job_id": job_id}
 
 
 @app.get("/sessions")
@@ -952,7 +1636,24 @@ async def chat_stream(
 
     route_start = time.perf_counter()
     print("🧭 [ChatStream] controller deciding...")
-    decision = AgentController(_tool_registry()).decide(request.message)
+    with start_span(
+        "agent.controller",
+        user_id=current_user.id,
+        session_id=request.session_id,
+        query=request.message,
+    ) as controller_span:
+        decision = AgentController(_tool_registry()).decide(request.message)
+        set_span_attributes(
+            controller_span,
+            {
+                "agent.mode": decision.mode.value,
+                "agent.intent": decision.route.intent.value,
+                "agent.strategy": decision.route.query_strategy.value,
+                "agent.route_method": decision.route.method,
+                "agent.need_grounding": decision.need_grounding,
+                "agent.max_retries": decision.max_retries,
+            },
+        )
     route = decision.route
     route_ms = _elapsed_ms(route_start)
     print(
@@ -966,14 +1667,37 @@ async def chat_stream(
     memory_service = _memory_service()
     print("🧠 [ChatStream] loading memory context...")
     memory_start = time.perf_counter()
-    memory = memory_service.load(request.session_id)
-    memory_context = memory_service.build_context(request.session_id, memory, db=db)
-    long_term_memory_service = _long_term_memory_service()
-    if decision.memory_policy.use_long_term_memory:
-        memory_context.long_term_memories = long_term_memory_service.search(
-            user_id=current_user.id,
-            query=request.message,
-            limit=decision.memory_policy.long_term_top_k,
+    with start_span(
+        "memory.load_context",
+        user_id=current_user.id,
+        session_id=request.session_id,
+        use_recent_messages=decision.memory_policy.use_recent_messages,
+        use_session_summary=decision.memory_policy.use_session_summary,
+        use_long_term_memory=decision.memory_policy.use_long_term_memory,
+    ) as memory_span:
+        memory = memory_service.load(request.session_id)
+        memory_context = memory_service.build_context(
+            request.session_id,
+            memory,
+            db=db,
+            use_recent_messages=decision.memory_policy.use_recent_messages,
+            use_session_summary=decision.memory_policy.use_session_summary,
+        )
+        long_term_memory_service = _long_term_memory_service()
+        if decision.memory_policy.use_long_term_memory:
+            memory_context.long_term_memories = long_term_memory_service.search(
+                user_id=current_user.id,
+                query=request.message,
+                limit=decision.memory_policy.long_term_top_k,
+            )
+        set_span_attributes(
+            memory_span,
+            {
+                "memory.used_summary": memory_context.used_summary,
+                "memory.has_context": memory_context.has_context,
+                "memory.recent_message_count": len(memory_context.recent_messages),
+                "memory.long_term_count": len(memory_context.long_term_memories),
+            },
         )
     memory_ms = _elapsed_ms(memory_start)
     print("✅ [ChatStream] memory context ready")
@@ -1131,7 +1855,7 @@ async def chat_stream(
         return StreamingResponse(chitchat_gen(), media_type="text/event-stream")
 
     if decision.mode == AgentMode.TOOL_CALL:
-        answer, trace = _handle_tool_call_decision(decision, request.message, current_user, route_ms)
+        answer, trace = await _handle_tool_call_decision(decision, request.message, current_user, route_ms)
         trace_json = json.dumps(trace, ensure_ascii=False)
         memory_service.append_exchange_with_metadata(
             request.session_id,
@@ -1337,63 +2061,122 @@ async def chat_stream(
             return nodes, profile
 
         def retrieve_for_workflow(query: str, top_k: int) -> list:
-            cached_nodes, cache_metadata = retrieval_cache.get(query, top_k=top_k)
-            if cached_nodes is not None:
-                retrieval_profiles.append(
+            with start_span(
+                "rag.retrieval",
+                query=query,
+                top_k=top_k,
+                vector_backend=app_settings.vector_store_backend,
+                rerank_enabled=app_settings.rerank_enabled,
+                auto_merging_enabled=app_settings.auto_merging_enabled,
+            ) as retrieval_span:
+                cached_nodes, cache_metadata = retrieval_cache.get(query, top_k=top_k)
+                set_span_attributes(
+                    retrieval_span,
                     {
-                        "query": query,
-                        "cache": cache_metadata,
-                        "fallback": False,
-                        "fallback_reasons": [],
-                        "retriever_core_ms": cache_metadata.get("read_ms", 0),
-                        "retriever_node_count": len(cached_nodes),
-                        "final_node_count": len(cached_nodes),
-                        "postprocessors": [],
-                        "retrieval_total_profiled_ms": cache_metadata.get("read_ms", 0),
-                    }
+                        "retrieval.cache_enabled": cache_metadata.get("enabled"),
+                        "retrieval.cache_hit": cache_metadata.get("hit"),
+                        "retrieval.cache_key": cache_metadata.get("key"),
+                        "retrieval.kb_version": cache_metadata.get("kb_version"),
+                    },
                 )
-                print(f"[RetrievalCache] HIT query={query[:80]} nodes={len(cached_nodes)}")
-                return cached_nodes
+                if cached_nodes is not None:
+                    retrieval_profiles.append(
+                        {
+                            "query": query,
+                            "cache": cache_metadata,
+                            "fallback": False,
+                            "fallback_reasons": [],
+                            "retriever_core_ms": cache_metadata.get("read_ms", 0),
+                            "retriever_node_count": len(cached_nodes),
+                            "final_node_count": len(cached_nodes),
+                            "postprocessors": [],
+                            "retrieval_total_profiled_ms": cache_metadata.get("read_ms", 0),
+                        }
+                    )
+                    set_span_attributes(
+                        retrieval_span,
+                        {
+                            "retrieval.final_node_count": len(cached_nodes),
+                            "retrieval.total_ms": cache_metadata.get("read_ms", 0),
+                            "retrieval.fallback": False,
+                        },
+                    )
+                    print(f"[RetrievalCache] HIT query={query[:80]} nodes={len(cached_nodes)}")
+                    return cached_nodes
 
-            # Prefer a profiled retrieval pipeline so we can split core
-            # retriever, rerank, and parent-context/auto-merge timings.
-            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-            future = executor.submit(_profiled_retrieve, query)
-            try:
-                nodes, profile = future.result(timeout=WORKFLOW_RETRIEVAL_TIMEOUT_SECONDS)
-                cache_write = retrieval_cache.set(query, top_k=top_k, nodes=nodes)
-                profile["cache"] = {**cache_metadata, **cache_write, "hit": False}
-                retrieval_profiles.append(profile)
-                return nodes
-            except concurrent.futures.TimeoutError:
-                future.cancel()
-                print(f"[Retrieval] profiled retrieve timeout after {WORKFLOW_RETRIEVAL_TIMEOUT_SECONDS}s, fallback to base retriever: {query}")
-            except Exception as exc:
-                print(f"[Retrieval] profiled retrieve failed, fallback to base retriever: {exc}")
-            finally:
-                executor.shutdown(wait=False, cancel_futures=True)
+                # Prefer a profiled retrieval pipeline so we can split core
+                # retriever, rerank, and parent-context/auto-merge timings.
+                executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+                future = executor.submit(_profiled_retrieve, query)
+                try:
+                    nodes, profile = future.result(timeout=WORKFLOW_RETRIEVAL_TIMEOUT_SECONDS)
+                    cache_write = retrieval_cache.set(query, top_k=top_k, nodes=nodes)
+                    profile["cache"] = {**cache_metadata, **cache_write, "hit": False}
+                    retrieval_profiles.append(profile)
+                    set_span_attributes(
+                        retrieval_span,
+                        {
+                            "retrieval.fallback": False,
+                            "retrieval.retriever_core_ms": profile.get("retriever_core_ms"),
+                            "retrieval.final_node_count": profile.get("final_node_count"),
+                            "retrieval.total_ms": profile.get("retrieval_total_profiled_ms"),
+                            "retrieval.postprocessor_count": len(profile.get("postprocessors") or []),
+                        },
+                    )
+                    for item in profile.get("postprocessors") or []:
+                        add_span_event(
+                            retrieval_span,
+                            "postprocessor",
+                            {
+                                "name": item.get("name"),
+                                "status": item.get("status"),
+                                "duration_ms": item.get("duration_ms"),
+                                "node_count": item.get("node_count"),
+                            },
+                        )
+                    return nodes
+                except concurrent.futures.TimeoutError:
+                    future.cancel()
+                    set_span_attributes(retrieval_span, {"retrieval.timeout": True})
+                    print(f"[Retrieval] profiled retrieve timeout after {WORKFLOW_RETRIEVAL_TIMEOUT_SECONDS}s, fallback to base retriever: {query}")
+                except Exception as exc:
+                    set_span_attributes(retrieval_span, {"retrieval.error": str(exc)})
+                    print(f"[Retrieval] profiled retrieve failed, fallback to base retriever: {exc}")
+                finally:
+                    executor.shutdown(wait=False, cancel_futures=True)
 
-            if base_retriever is None:
-                return []
-            try:
-                fallback_start = time.perf_counter()
-                nodes = base_retriever.retrieve(QueryBundle(query))
-                retrieval_profiles.append(
-                    {
-                        "query": query,
-                        "fallback": True,
-                        "fallback_reasons": ["profiled_retrieve_timeout_or_error"],
-                        "retriever_core_ms": _elapsed_ms(fallback_start),
-                        "retriever_node_count": len(nodes),
-                        "final_node_count": len(nodes),
-                        "postprocessors": [],
-                        "retrieval_total_profiled_ms": _elapsed_ms(fallback_start),
-                    }
-                )
-                return nodes
-            except Exception as exc:
-                print(f"[Retrieval] base retriever failed: {exc}")
-                return []
+                if base_retriever is None:
+                    set_span_attributes(retrieval_span, {"retrieval.fallback": True, "retrieval.final_node_count": 0})
+                    return []
+                try:
+                    fallback_start = time.perf_counter()
+                    nodes = base_retriever.retrieve(QueryBundle(query))
+                    fallback_ms = _elapsed_ms(fallback_start)
+                    retrieval_profiles.append(
+                        {
+                            "query": query,
+                            "fallback": True,
+                            "fallback_reasons": ["profiled_retrieve_timeout_or_error"],
+                            "retriever_core_ms": fallback_ms,
+                            "retriever_node_count": len(nodes),
+                            "final_node_count": len(nodes),
+                            "postprocessors": [],
+                            "retrieval_total_profiled_ms": fallback_ms,
+                        }
+                    )
+                    set_span_attributes(
+                        retrieval_span,
+                        {
+                            "retrieval.fallback": True,
+                            "retrieval.final_node_count": len(nodes),
+                            "retrieval.total_ms": fallback_ms,
+                        },
+                    )
+                    return nodes
+                except Exception as exc:
+                    set_span_attributes(retrieval_span, {"retrieval.fallback_error": str(exc)})
+                    print(f"[Retrieval] base retriever failed: {exc}")
+                    return []
 
         grounding_mode = (request.grounding_mode or "off").lower()
         if _should_use_simple_rag_fast_path(decision, grounding_mode):
@@ -1448,14 +2231,28 @@ async def chat_stream(
             citations = build_citations_from_nodes(source_node_objects)
             answer_parts = []
             try:
-                for token in stream_answer_from_nodes(
-                    request.message,
-                    source_node_objects,
-                    memory_context=memory_context,
-                    intermediate_answers=[],
-                ):
-                    answer_parts.append(token)
-                    yield f"event: chunk\ndata: {token.replace(chr(10), '\\n')}\n\n"
+                with start_span(
+                    "rag.generation",
+                    mode="simple_rag_fast_path",
+                    query=request.message,
+                    node_count=len(source_node_objects),
+                    citation_count=len(citations),
+                ) as generation_span:
+                    for token in stream_answer_from_nodes(
+                        request.message,
+                        source_node_objects,
+                        memory_context=memory_context,
+                        intermediate_answers=[],
+                    ):
+                        answer_parts.append(token)
+                        yield f"event: chunk\ndata: {token.replace(chr(10), '\\n')}\n\n"
+                    set_span_attributes(
+                        generation_span,
+                        {
+                            "generation.output_chars": len("".join(answer_parts)),
+                            "generation.token_chunks": len(answer_parts),
+                        },
+                    )
             except Exception as exc:
                 memory_service.append_exchange_with_metadata(
                     request.session_id,
@@ -1536,6 +2333,14 @@ async def chat_stream(
             initial_top_k=5,
         )
         workflow_start = time.perf_counter()
+        workflow_span_cm = start_span(
+            "rag.workflow",
+            query=request.message,
+            strategy=decision.rag_strategy.value,
+            max_retry=decision.max_retries,
+            initial_top_k=5,
+        )
+        workflow_span = workflow_span_cm.__enter__()
         handler = workflow.run(query=request.message)
 
         yield f"event: route\ndata: {route_json}\n\n"
@@ -1544,10 +2349,25 @@ async def chat_stream(
         try:
             async for event in handler.stream_events():
                 if isinstance(event, WorkflowStepEvent):
+                    add_span_event(
+                        workflow_span,
+                        "workflow_step",
+                        event.to_payload(),
+                    )
                     yield _sse_event("step", event.to_payload())
 
             workflow_result = await handler
+            set_span_attributes(
+                workflow_span,
+                {
+                    "workflow.source_node_count": len(workflow_result.source_nodes),
+                    "workflow.retrieval_query": workflow_result.retrieval_query or request.message,
+                    "workflow.sub_question_count": len(workflow_result.sub_question_results or []),
+                },
+            )
         except asyncio.CancelledError:
+            set_span_attributes(workflow_span, {"workflow.cancelled": True})
+            workflow_span_cm.__exit__(None, None, None)
             memory_service.append_exchange_with_metadata(
                 request.session_id,
                 memory,
@@ -1565,6 +2385,8 @@ async def chat_stream(
             _schedule_memory_compression(background_tasks, memory_service, request.session_id, current_user.id)
             raise
         except Exception as exc:
+            set_span_attributes(workflow_span, {"workflow.error": str(exc)})
+            workflow_span_cm.__exit__(None, None, None)
             memory_service.append_exchange_with_metadata(
                 request.session_id,
                 memory,
@@ -1583,6 +2405,9 @@ async def chat_stream(
             yield _sse_event("error", {"message": f"Agentic workflow failed: {exc}"})
             yield "data: [DONE]\n\n"
             return
+        finally:
+            if "workflow_result" in locals():
+                workflow_span_cm.__exit__(None, None, None)
 
         if workflow_result is None:
             memory_service.append_exchange_with_metadata(
@@ -1669,15 +2494,30 @@ async def chat_stream(
                 yield f"event: trace\ndata: {json.dumps(trace_payload, ensure_ascii=False)}\n\n"
         answer_parts = []
         try:
-            for token in stream_answer_from_nodes(
-                retrieval_query,
-                workflow_result.source_nodes,
-                memory_context=memory_context,
-                intermediate_answers=intermediate_answers,
-            ):
-                answer_parts.append(token)
-                safe_token = token.replace("\n", "\\n")
-                yield f"event: chunk\ndata: {safe_token}\n\n"
+            with start_span(
+                "rag.generation",
+                mode="agentic_workflow",
+                query=retrieval_query,
+                original_query=request.message,
+                node_count=len(workflow_result.source_nodes),
+                intermediate_answer_count=len(intermediate_answers),
+            ) as generation_span:
+                for token in stream_answer_from_nodes(
+                    retrieval_query,
+                    workflow_result.source_nodes,
+                    memory_context=memory_context,
+                    intermediate_answers=intermediate_answers,
+                ):
+                    answer_parts.append(token)
+                    safe_token = token.replace("\n", "\\n")
+                    yield f"event: chunk\ndata: {safe_token}\n\n"
+                set_span_attributes(
+                    generation_span,
+                    {
+                        "generation.output_chars": len("".join(answer_parts)),
+                        "generation.token_chunks": len(answer_parts),
+                    },
+                )
         except asyncio.CancelledError:
             partial_answer = "".join(answer_parts).strip() or "Answer interrupted by client."
             memory_service.append_exchange_with_metadata(
@@ -1801,11 +2641,28 @@ async def chat_stream(
                 ),
             )
             grounding_start = time.perf_counter()
-            grounding_result = check_answer_grounding(
+            with start_span(
+                "rag.grounding",
+                mode=grounding_mode,
+                source=grounding_source,
                 question=request.message,
-                answer=final_answer,
-                nodes=workflow_result.source_nodes,
-            )
+                node_count=len(workflow_result.source_nodes),
+                answer_chars=len(final_answer),
+            ) as grounding_span:
+                grounding_result = check_answer_grounding(
+                    question=request.message,
+                    answer=final_answer,
+                    nodes=workflow_result.source_nodes,
+                )
+                set_span_attributes(
+                    grounding_span,
+                    {
+                        "grounding.verdict": grounding_result.verdict,
+                        "grounding.score": grounding_result.grounding_score,
+                        "grounding.unsupported_count": len(grounding_result.unsupported_points),
+                        "grounding.summary": grounding_result.summary,
+                    },
+                )
             grounding_ms = _elapsed_ms(grounding_start)
             trace_payload = _merge_trace_timings(trace_payload, {"grounding_ms": grounding_ms})
             trace_payload["grounding"] = grounding_result.to_dict()
@@ -1881,4 +2738,3 @@ async def chat_stream(
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(gen(), media_type="text/event-stream")
-

@@ -5,14 +5,9 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from openai import OpenAI
-
-from app.config import settings
+from app.llm import LLMTask, get_llm_gateway
 
 logger = logging.getLogger(__name__)
-
-STEP_BACK_TIMEOUT_SECONDS = 45
-
 
 @dataclass
 class StepBackResult:
@@ -54,20 +49,14 @@ def generate_step_back_question(query: str) -> StepBackResult:
         )
 
     try:
-        client = OpenAI(
-            api_key=settings.llm_api_key,
-            base_url=settings.llm_api_base,
-            timeout=STEP_BACK_TIMEOUT_SECONDS,
-        )
-        response = client.chat.completions.create(
-            model=settings.llm_model,
+        response = get_llm_gateway().chat_completion(
+            task=LLMTask.STEP_BACK,
             messages=[
                 {"role": "system", "content": "你负责为 RAG 检索生成 step-back background question。"},
                 {"role": "user", "content": STEP_BACK_PROMPT.format(query=original)},
             ],
             temperature=0,
             max_tokens=180,
-            stream=False,
         )
         question = (response.choices[0].message.content or "").strip()
         if not question:

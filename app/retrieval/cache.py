@@ -48,6 +48,8 @@ def knowledge_base_version() -> str:
             "ingest": ingest_hash,
             "bm25": bm25_hash,
             "vector_store_backend": app_settings.vector_store_backend,
+            "chroma_dir": app_settings.chroma_dir,
+            "chroma_collection": app_settings.chroma_collection,
             "pgvector_table": app_settings.pgvector_table_name,
             "milvus_collection": app_settings.milvus_collection,
         },

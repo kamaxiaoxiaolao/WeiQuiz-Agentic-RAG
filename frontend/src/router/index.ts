@@ -16,16 +16,30 @@ const router = createRouter({
       component: () => import('@/views/ChatView.vue'),
       meta: { requiresAuth: true },
     },
+    {
+      path: '/admin',
+      name: 'admin',
+      component: () => import('@/views/AdminView.vue'),
+      meta: { requiresAuth: true, requiresAdmin: true },
+    },
   ],
 })
 
-// 路由守卫
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   const auth = useAuthStore()
 
   if (to.meta.requiresAuth && !auth.isLoggedIn) {
     return '/login'
   }
+
+  if (auth.isLoggedIn && !auth.user) {
+    await auth.fetchUser()
+  }
+
+  if (to.meta.requiresAdmin && !auth.isAdmin) {
+    return '/'
+  }
+
   if (to.meta.guest && auth.isLoggedIn) {
     return '/'
   }

@@ -9,10 +9,10 @@ from typing import Optional
 import redis
 from llama_index.core.memory import ChatMemoryBuffer
 from llama_index.core.llms import ChatMessage, MessageRole
-from openai import OpenAI
 from sqlalchemy.orm import Session
 
 from app.config import settings as app_settings
+from app.llm import LLMTask, get_llm_gateway
 from app.auth.repository import (
     create_chat_exchange,
     get_session_factory,
@@ -26,7 +26,9 @@ from app.auth.repository import (
 DEFAULT_MEMORY_CONTEXT_TURNS = 3
 SUMMARY_TRIGGER_MESSAGES = 12
 SUMMARY_RECENT_MESSAGES = DEFAULT_MEMORY_CONTEXT_TURNS * 2
-SUMMARY_TIMEOUT_SECONDS = 45
+SUMMARY_MAX_INPUT_CHARS = 6000
+SUMMARY_MAX_MESSAGE_CHARS = 1200
+FALLBACK_SUMMARY_MAX_CHARS = 500
 
 
 @dataclass
@@ -169,25 +171,37 @@ class MemoryService:
         memory: ChatMemoryBuffer,
         *,
         max_turns: int = DEFAULT_MEMORY_CONTEXT_TURNS,
+        use_recent_messages: bool = True,
+        use_session_summary: bool = True,
         db: Session | None = None,
     ) -> MemoryContext:
         """Build prompt-ready recent session context without trace metadata."""
 
-        try:
-            all_messages = list(memory.get())
-        except Exception:
-            all_messages = []
+        all_messages = []
+        if use_recent_messages:
+            try:
+                all_messages = list(memory.get())
+            except Exception:
+                all_messages = []
 
-        recent_messages = self._to_context_messages(all_messages[-max_turns * 2 :])
+        recent_messages = (
+            self._to_context_messages(all_messages[-max_turns * 2 :])
+            if use_recent_messages
+            else []
+        )
 
         summary = ""
         if db is not None:
             try:
-                if not recent_messages:
+                if use_recent_messages and not recent_messages:
                     recent_rows = list_recent_chat_messages(db, session_id, max_turns * 2)
                     recent_messages = self._to_context_messages(recent_rows)
-                summary_row = get_session_summary(db, session_id)
-                summary = summary_row.summary if summary_row is not None else ""
+                    if recent_rows:
+                        self._trim_memory_to_recent(memory, recent_rows)
+                        self.save(session_id, memory)
+                if use_session_summary:
+                    summary_row = get_session_summary(db, session_id)
+                    summary = summary_row.summary if summary_row is not None else ""
             except Exception:
                 summary = ""
 
@@ -307,6 +321,7 @@ class MemoryService:
         }
         metadata.append(user_metadata)
         metadata.append(assistant_metadata)
+        metadata = self._sync_metadata_to_memory(memory, metadata)
         self._save_metadata_to_redis(session_id, metadata)
         if db is not None and owner_user_id:
             try:
@@ -376,6 +391,7 @@ class MemoryService:
         new_messages = [message for message in evicted if covered_id is None or message.id > covered_id]
         if not new_messages:
             self._trim_memory_to_recent(memory, recent)
+            self._trim_metadata_to_recent(session_id, len(recent))
             return False
 
         summary = self._summarize(
@@ -395,6 +411,7 @@ class MemoryService:
             + len(new_messages),
         )
         self._trim_memory_to_recent(memory, recent)
+        self._trim_metadata_to_recent(session_id, len(recent))
         return True
 
     def compression_plan(self, session_id: str, *, db: Session) -> dict:
@@ -432,6 +449,25 @@ class MemoryService:
             if content:
                 memory.put(ChatMessage(role=role, content=content))
 
+    def _trim_metadata_to_recent(self, session_id: str, recent_message_count: int) -> None:
+        metadata = self._load_metadata_from_redis(session_id)
+        if not metadata:
+            return
+        if recent_message_count <= 0:
+            self._save_metadata_to_redis(session_id, [])
+            return
+        self._save_metadata_to_redis(session_id, metadata[-recent_message_count:])
+
+    @staticmethod
+    def _sync_metadata_to_memory(memory: ChatMemoryBuffer, metadata: list[dict]) -> list[dict]:
+        try:
+            message_count = len(memory.get())
+        except Exception:
+            return metadata
+        if message_count <= 0:
+            return []
+        return metadata[-message_count:]
+
     @staticmethod
     def _summarize(previous_summary: str, messages: list) -> str:
         messages_text = MemoryService._format_messages_for_summary(messages)
@@ -454,17 +490,11 @@ class MemoryService:
 5. 使用简洁中文，不超过 260 字。
 
 更新后的摘要："""
-        client = OpenAI(
-            api_key=app_settings.llm_api_key,
-            base_url=app_settings.llm_api_base,
-            timeout=SUMMARY_TIMEOUT_SECONDS,
-        )
-        response = client.chat.completions.create(
-            model=app_settings.llm_model,
+        response = get_llm_gateway().chat_completion(
+            task=LLMTask.MEMORY_SUMMARY,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1,
             max_tokens=320,
-            stream=False,
         )
         summary = (response.choices[0].message.content or "").strip()
         if summary:
@@ -487,17 +517,28 @@ class MemoryService:
                 clean_lines.append(f"助手曾确认：{content[:120]}")
             if len(clean_lines) >= 5:
                 break
-        return "；".join(clean_lines)[:500]
+        return "；".join(clean_lines)[:FALLBACK_SUMMARY_MAX_CHARS]
 
     @staticmethod
     def _format_messages_for_summary(messages: list) -> str:
         lines = []
+        used_chars = 0
         for message in messages:
             if MemoryService._is_low_value_summary_message(message):
                 continue
             content = str(message.content or "").strip()
             if content:
-                lines.append(f"{message.role}: {content[:1200]}")
+                clipped = content[:SUMMARY_MAX_MESSAGE_CHARS]
+                line = f"{message.role}: {clipped}"
+                if used_chars + len(line) > SUMMARY_MAX_INPUT_CHARS:
+                    remaining = SUMMARY_MAX_INPUT_CHARS - used_chars
+                    if remaining <= 0:
+                        break
+                    line = line[:remaining]
+                lines.append(line)
+                used_chars += len(line)
+                if used_chars >= SUMMARY_MAX_INPUT_CHARS:
+                    break
         return "\n".join(lines)
 
     @staticmethod

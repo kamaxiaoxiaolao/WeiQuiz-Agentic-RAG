@@ -5,9 +5,8 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 
-from openai import OpenAI
-
 from app.config import settings
+from app.llm import LLMTask, get_llm_gateway
 from app.agentic.router import IntentType, QueryStrategy, RouteResult, route_query
 from app.tools.planner import ToolCallPlan, plan_tool_call
 from app.tools.registry import ToolRegistry
@@ -133,6 +132,9 @@ class AgentController:
         if rule_result.needed:
             return rule_result
 
+        if not getattr(settings, "clarification_llm_enabled", False):
+            return ClarificationDecision()
+
         return self._llm_based_clarification(query, route)
 
     @staticmethod
@@ -194,14 +196,8 @@ class AgentController:
 当前路由：intent={route.intent.value}, strategy={route.query_strategy.value}
 """
         try:
-            client = OpenAI(
-                api_key=settings.qwen_llm_api_key,
-                base_url=settings.router_api_base,
-                timeout=settings.router_timeout_seconds,
-                max_retries=0,
-            )
-            response = client.chat.completions.create(
-                model=getattr(settings, "router_model", None) or settings.llm_model,
+            response = get_llm_gateway().chat_completion(
+                task=LLMTask.CLARIFICATION,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0,
                 max_tokens=160,

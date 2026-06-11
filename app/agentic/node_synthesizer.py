@@ -9,15 +9,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterator, Sequence
 
-from openai import OpenAI
-
 from app.config import settings
+from app.llm import LLMTask, get_llm_gateway
 from app.metadata_schema import SourceNodePayload
 from app.services.memory_service import MemoryContext
 
 
-DEFAULT_MAX_CONTEXT_CHARS = 8000
-LLM_REQUEST_TIMEOUT_SECONDS = 45
+DEFAULT_MAX_CONTEXT_CHARS = 4000
 DEFAULT_MAX_HISTORY_TURNS = 4
 
 
@@ -57,10 +55,11 @@ def stream_answer_from_nodes(
     *,
     memory_context: MemoryContext | None = None,
     intermediate_answers: Sequence[dict] | None = None,
-    max_context_chars: int = DEFAULT_MAX_CONTEXT_CHARS,
+    max_context_chars: int | None = None,
 ) -> Iterator[str]:
     """Stream a final answer from final workflow nodes and optional sub-answers."""
 
+    max_context_chars = max_context_chars or settings.generation_max_context_chars
     prompt = build_prompt_from_nodes(
         query=query,
         nodes=nodes,
@@ -68,13 +67,8 @@ def stream_answer_from_nodes(
         intermediate_answers=intermediate_answers,
         max_context_chars=max_context_chars,
     )
-    client = OpenAI(
-        api_key=settings.llm_api_key,
-        base_url=settings.llm_api_base,
-        timeout=LLM_REQUEST_TIMEOUT_SECONDS,
-    )
-    response = client.chat.completions.create(
-        model=settings.llm_model,
+    response = get_llm_gateway().stream_chat_completion(
+        task=LLMTask.GENERATION,
         messages=[
             {
                 "role": "system",
@@ -88,7 +82,7 @@ def stream_answer_from_nodes(
             {"role": "user", "content": prompt},
         ],
         temperature=0.2,
-        stream=True,
+        max_tokens=settings.generation_max_tokens,
     )
     for chunk in response:
         if not chunk.choices or not chunk.choices[0]:
@@ -107,8 +101,9 @@ def build_prompt_from_nodes(
     *,
     memory_context: MemoryContext | None = None,
     intermediate_answers: Sequence[dict] | None = None,
-    max_context_chars: int = DEFAULT_MAX_CONTEXT_CHARS,
+    max_context_chars: int | None = None,
 ) -> str:
+    max_context_chars = max_context_chars or settings.generation_max_context_chars
     snippets = collect_context_snippets(nodes, max_context_chars=max_context_chars)
     context = "\n\n".join(
         f"[来源 {snippet.index}] {format_source_label(snippet.source)}\n{snippet.text}"
@@ -136,10 +131,11 @@ def synthesize_intermediate_answers(
     sub_question_results: Sequence[dict],
     *,
     memory_context: MemoryContext | None = None,
-    max_context_chars: int = 3000,
+    max_context_chars: int | None = None,
 ) -> list[dict]:
     """Generate one grounded intermediate answer for each sub-question."""
 
+    max_context_chars = max_context_chars or settings.intermediate_synthesis_max_context_chars
     answers: list[dict] = []
     for item in sub_question_results or []:
         question = str(item.get("query") or "").strip()
@@ -172,8 +168,9 @@ def synthesize_single_intermediate_answer(
     nodes: Sequence,
     *,
     memory_context: MemoryContext | None = None,
-    max_context_chars: int = 3000,
+    max_context_chars: int | None = None,
 ) -> str:
+    max_context_chars = max_context_chars or settings.intermediate_synthesis_max_context_chars
     snippets = collect_context_snippets(nodes, max_context_chars=max_context_chars)
     context = "\n\n".join(
         f"[来源 {snippet.index}] {format_source_label(snippet.source)}\n{snippet.text}"
@@ -192,19 +189,14 @@ def synthesize_single_intermediate_answer(
         "2. 如果证据不足，直接说明缺少依据。\n"
         "3. 输出 1-3 句话。\n"
     )
-    client = OpenAI(
-        api_key=settings.llm_api_key,
-        base_url=settings.llm_api_base,
-        timeout=LLM_REQUEST_TIMEOUT_SECONDS,
-    )
-    response = client.chat.completions.create(
-        model=settings.llm_model,
+    response = get_llm_gateway().chat_completion(
+        task=LLMTask.INTERMEDIATE_SYNTHESIS,
         messages=[
             {"role": "system", "content": "你是企业知识库 RAG 的证据归纳助手。"},
             {"role": "user", "content": prompt},
         ],
         temperature=0,
-        stream=False,
+        max_tokens=settings.intermediate_synthesis_max_tokens,
     )
     return (response.choices[0].message.content or "").strip()
 

@@ -72,6 +72,27 @@ def test_source_payload_falls_back_to_doc_id_when_path_missing():
     assert payload["chunk_id"] == "chunk-2"
 
 
+def test_source_payload_exposes_table_context_metadata():
+    node = SimpleNamespace(
+        text="table context",
+        score=0.9,
+        metadata={
+            "doc_id": "report",
+            "source_path": "report.pdf",
+            "chunk_id": "report::table::0::context",
+            "retrieval_mode": "table_context",
+            "table_id": "report::table::0",
+            "table_page_range": "1-2",
+        },
+    )
+
+    payload = SourceNodePayload.from_node(node).to_api_dict()
+
+    assert payload["retrieval_mode"] == "table_context"
+    assert payload["table_id"] == "report::table::0"
+    assert payload["table_page_range"] == "1-2"
+
+
 def test_build_hierarchy_node_metadata_keeps_section_separate_from_parent():
     metadata = build_hierarchy_node_metadata(
         base_metadata={

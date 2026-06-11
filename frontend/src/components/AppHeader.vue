@@ -1,13 +1,13 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import api from '@/api'
 import Icon from './Icon.vue'
 
+const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
-
 const health = ref({ ok: false, label: '未连接' })
 
 async function checkHealth() {
@@ -43,30 +43,45 @@ defineExpose({ checkHealth })
       </div>
     </div>
 
-    <div class="flex items-center gap-4">
-      <span 
-        class="inline-flex items-center gap-2 rounded-xl border px-3.5 py-1.5 text-xs font-semibold transition-all hover:shadow-sm"
-        :class="health.ok ? 'border-emerald-200 bg-gradient-to-r from-emerald-50 to-emerald-100/50 text-emerald-700' : 'border-rose-200 bg-gradient-to-r from-rose-50 to-rose-100/50 text-rose-700'"
+    <div class="flex items-center gap-3">
+      <router-link
+        v-if="auth.user && route.path !== '/'"
+        to="/"
+        class="hidden sm:inline-flex h-9 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"
       >
-        <span 
-          class="h-2.5 w-2.5 rounded-full transition-all" 
-          :class="health.ok ? 'bg-emerald-500' : 'bg-rose-500 animate-pulse'"
-        ></span>
+        <Icon name="message-square" class="h-4 w-4" />
+        问答
+      </router-link>
+
+      <router-link
+        v-if="auth.isAdmin && route.path !== '/admin'"
+        to="/admin"
+        class="hidden sm:inline-flex h-9 items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 text-xs font-bold text-amber-700 hover:bg-amber-100"
+      >
+        <Icon name="shield-check" class="h-4 w-4" />
+        后台
+      </router-link>
+
+      <span
+        class="inline-flex items-center gap-2 rounded-xl border px-3.5 py-1.5 text-xs font-semibold transition-all hover:shadow-sm"
+        :class="health.ok ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700'"
+      >
+        <span class="h-2.5 w-2.5 rounded-full transition-all" :class="health.ok ? 'bg-emerald-500' : 'bg-rose-500 animate-pulse'"></span>
         {{ health.label }}
       </span>
 
       <div v-if="auth.user" class="flex items-center gap-3">
-        <div class="hidden sm:flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-50 to-indigo-100/50 px-3.5 py-2 text-xs font-semibold text-indigo-700 border border-indigo-100">
+        <div class="hidden sm:flex items-center gap-2 rounded-xl bg-indigo-50 px-3.5 py-2 text-xs font-semibold text-indigo-700 border border-indigo-100">
           <div class="h-6 w-6 rounded-lg bg-gradient-primary flex items-center justify-center">
             <Icon name="user" class="h-3.5 w-3.5 text-white" />
           </div>
           {{ auth.user.display_name || auth.user.username }}
           <span v-if="auth.isAdmin" class="rounded-lg bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">ADMIN</span>
         </div>
-        <button 
-          @click="logout" 
-          class="h-9 w-9 grid place-items-center rounded-xl border border-slate-200 bg-white text-slate-400 hover:text-rose-500 hover:border-rose-200 hover:bg-rose-50 transition-all" 
+        <button
+          class="h-9 w-9 grid place-items-center rounded-xl border border-slate-200 bg-white text-slate-400 hover:text-rose-500 hover:border-rose-200 hover:bg-rose-50 transition-all"
           title="退出登录"
+          @click="logout"
         >
           <Icon name="log-out" class="h-4 w-4" />
         </button>

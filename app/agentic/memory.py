@@ -16,9 +16,9 @@ from typing import Optional, List, Dict, Any
 
 from llama_index.core.memory import ChatMemoryBuffer
 from llama_index.core.schema import ChatMessage, MessageRole
-from openai import OpenAI
 
 from app.config import settings
+from app.llm import LLMTask, get_llm_gateway
 
 logger = logging.getLogger(__name__)
 
@@ -145,8 +145,6 @@ class SessionMemoryManager:
 
     def _generate_summary(self, messages: List[ChatMessage]) -> str:
         """使用 LLM 生成会话摘要"""
-        client = OpenAI(api_key=settings.llm_api_key, base_url=settings.llm_api_base)
-
         messages_text = "\n".join([
             f"{msg.role.value}: {msg.content}"
             for msg in messages
@@ -166,8 +164,8 @@ class SessionMemoryManager:
 
 总结："""
 
-        response = client.chat.completions.create(
-            model=settings.llm_model,
+        response = get_llm_gateway().chat_completion(
+            task=LLMTask.MEMORY_SUMMARY,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1,
             max_tokens=200,

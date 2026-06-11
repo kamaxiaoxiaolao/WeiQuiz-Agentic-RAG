@@ -16,6 +16,9 @@ wei_quiz_rag.egg-info/
 
 # Runtime data / local knowledge base / indexes / eval datasets
 data/
+!data/
+!data/.gitkeep
+data/*
 !data/.gitkeep
 app/ingest/data/
 app/eval/ragas_runs/

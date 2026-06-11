@@ -13,15 +13,12 @@ import re
 from dataclasses import dataclass, field
 from typing import Sequence
 
-from openai import OpenAI
-
-from app.config import settings
+from app.llm import LLMTask, get_llm_gateway
 from app.metadata_schema import SourceNodePayload
 
 logger = logging.getLogger(__name__)
 
 
-GROUNDING_TIMEOUT_SECONDS = 45
 MAX_EVIDENCE_CHARS = 9000
 
 
@@ -149,13 +146,8 @@ def check_answer_grounding(
 
     evidence = _format_evidence(nodes, max_chars=max_evidence_chars)
     try:
-        client = OpenAI(
-            api_key=settings.llm_api_key,
-            base_url=settings.llm_api_base,
-            timeout=GROUNDING_TIMEOUT_SECONDS,
-        )
-        response = client.chat.completions.create(
-            model=settings.llm_model,
+        response = get_llm_gateway().chat_completion(
+            task=LLMTask.GROUNDING,
             messages=[
                 {"role": "system", "content": "你是企业 RAG 系统的证据一致性校验器。"},
                 {
@@ -168,7 +160,6 @@ def check_answer_grounding(
                 },
             ],
             temperature=0,
-            stream=False,
         )
         payload = _parse_json(response.choices[0].message.content or "")
         return _result_from_payload(payload)

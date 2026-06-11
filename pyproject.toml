@@ -1,10 +1,13 @@
 [project]
 name = "wei-quiz-rag"
 version = "0.1.0"
-description = "A local knowledge base Q&A (RAG) application."
+description = "Enterprise Agentic RAG system for private knowledge-base Q&A."
 authors = [
-    { name = "Your Name", email = "your.email@example.com" }
+    { name = "WeiQuiz Contributors" }
 ]
+license = { text = "MIT" }
+readme = "README.md"
+requires-python = ">=3.11"
 dependencies = [
     "llama-index",
     "pydantic-settings",
@@ -28,6 +31,7 @@ dependencies = [
     "psycopg2-binary>=2.9.9",
     "redis>=7.4.0",
     "unstructured[pdf]>=0.22.22",
+    "opencv-python-headless>=4.10.0.84",
     "pypdf>=6.9.0",
     "python-magic-bin>=0.4.14; sys_platform == 'win32'",
     "python-magic>=0.4.27; sys_platform != 'win32'",
@@ -36,19 +40,21 @@ dependencies = [
     "psycopg[binary]>=3.2.0",
     "pymupdf>=1.24.0",
     "ragas",
+    "arize-phoenix>=8.0.0",
+    "arize-phoenix-otel>=0.8.0",
+    "openinference-instrumentation-llama-index>=4.0.0",
     "datasets>=4.8.3",
     "pyjwt>=2.12.1",
     "mem0ai>=2.0.0b1",
 ]
-requires-python = ">=3.11"
 
 [tool.uv]
-# 配置 uv 使用阿里云镜像源
-index-url = "https://mirrors.aliyun.com/pypi/simple" # 修改为阿里云镜像源
+# Use the Aliyun PyPI mirror by default for faster installs in mainland China.
+index-url = "https://mirrors.aliyun.com/pypi/simple"
 
 [tool.setuptools]
 packages = ["app"]
 
 [tool.pytest.ini_options]
-# 禁用测试 ID 转义，让中文正常显示
-disable_test_id_escaping = true
+# Keep Chinese test ids readable in pytest output.
+disable_test_id_escaping_and_forfeit_all_rights_to_community_support = true

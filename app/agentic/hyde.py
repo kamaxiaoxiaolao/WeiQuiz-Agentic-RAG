@@ -5,14 +5,9 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from openai import OpenAI
-
-from app.config import settings
+from app.llm import LLMTask, get_llm_gateway
 
 logger = logging.getLogger(__name__)
-
-HYDE_TIMEOUT_SECONDS = 45
-
 
 @dataclass
 class HyDEResult:
@@ -56,20 +51,14 @@ def generate_hyde_query(query: str) -> HyDEResult:
         )
 
     try:
-        client = OpenAI(
-            api_key=settings.llm_api_key,
-            base_url=settings.llm_api_base,
-            timeout=HYDE_TIMEOUT_SECONDS,
-        )
-        response = client.chat.completions.create(
-            model=settings.llm_model,
+        response = get_llm_gateway().chat_completion(
+            task=LLMTask.HYDE,
             messages=[
                 {"role": "system", "content": "你负责生成用于检索增强的 hypothetical document。"},
                 {"role": "user", "content": HYDE_PROMPT.format(query=original)},
             ],
             temperature=0.2,
             max_tokens=320,
-            stream=False,
         )
         document = (response.choices[0].message.content or "").strip()
         if not document:

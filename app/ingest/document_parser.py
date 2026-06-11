@@ -6,7 +6,7 @@ from html.parser import HTMLParser
 import logging
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional, Literal, List, Dict, Any
 
 from llama_index.core.schema import Document
@@ -157,7 +157,7 @@ def parse_pdf_to_blocks(
         logger.warning("unstructured not available, fallback to pypdf: %s", e)
         return _fallback_pypdf_to_blocks(file_path, doc_id=doc_id, source_path=source_path)
 
-    strategy = "hi_res" if use_hi_res else "auto"
+    strategy = "hi_res" if use_hi_res or infer_table_structure else "fast"
     lang_list = languages if languages is not None else ["chi_sim", "eng"]
 
     try:
@@ -1088,12 +1088,246 @@ def fix_titles(
 
 def _block_to_section_text(block: Block) -> str:
     if block.block_type == "table":
-        return (block.html or block.text or "").strip()
+        table_text = (block.html or block.text or "").strip()
+        extra = dict(block.extra_info or {})
+        table_id = str(extra.get("table_id") or "").strip()
+        if table_id:
+            page_range = str(extra.get("page_range") or "").strip()
+            headers = extra.get("headers") or []
+            header_text = ", ".join(str(item).strip() for item in headers if str(item).strip())
+            metadata_lines = [f"[TABLE_ID: {table_id}]"]
+            if page_range:
+                metadata_lines.append(f"[TABLE_PAGE_RANGE: {page_range}]")
+            if header_text:
+                metadata_lines.append(f"[TABLE_HEADERS: {header_text}]")
+            return "\n".join(metadata_lines + [table_text]).strip()
+        return table_text
     if block.block_type == "title":
         return f"## {block.text.strip()}"
     if block.block_type == "list_item":
         return f"- {block.text.strip()}"
     return (block.text or "").strip()
+
+
+def _parse_markdown_table_rows(text: str) -> List[List[str]]:
+    rows: List[List[str]] = []
+    for raw_line in (text or "").splitlines():
+        line = raw_line.strip()
+        if not line.startswith("|") or not line.endswith("|"):
+            continue
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        if cells and all(re.fullmatch(r":?-{3,}:?", cell or "") for cell in cells):
+            continue
+        if any(cells):
+            rows.append(cells)
+    return rows
+
+
+def _normalize_table_header(row: List[str]) -> List[str]:
+    return [re.sub(r"\s+", " ", cell).strip().lower() for cell in row]
+
+
+def _table_column_count(block: Block) -> int:
+    rows = _parse_markdown_table_rows(block.text)
+    if rows:
+        return max(len(row) for row in rows)
+    text_lines = [line for line in (block.text or "").splitlines() if line.strip()]
+    return max((len(re.split(r"\s{2,}|\t+", line.strip())) for line in text_lines), default=0)
+
+
+def _table_header(block: Block) -> List[str]:
+    rows = _parse_markdown_table_rows(block.text)
+    return _normalize_table_header(rows[0]) if rows else []
+
+
+def _looks_like_continued_table(left: Block, right: Block) -> bool:
+    if left.block_type != "table" or right.block_type != "table":
+        return False
+    if left.doc_id != right.doc_id or left.source_path != right.source_path:
+        return False
+    if left.page_no is None or right.page_no is None or right.page_no != left.page_no + 1:
+        return False
+
+    left_cols = _table_column_count(left)
+    right_cols = _table_column_count(right)
+    if left_cols <= 0 or right_cols <= 0 or left_cols != right_cols:
+        return False
+
+    left_header = _table_header(left)
+    right_header = _table_header(right)
+    if left_header and right_header and left_header == right_header:
+        return True
+
+    right_text = (right.text or "").strip().lower()
+    if right_text.startswith(("continued", "cont.", "续表")):
+        return True
+
+    return bool(left_header and not right_header)
+
+
+def _markdown_table_from_rows(rows: List[List[str]]) -> str:
+    if not rows:
+        return ""
+    max_cols = max(len(row) for row in rows)
+    normalized = [row + [""] * (max_cols - len(row)) for row in rows]
+    header = normalized[0]
+    body = normalized[1:]
+    lines = [
+        "| " + " | ".join(header) + " |",
+        "| " + " | ".join(["---"] * max_cols) + " |",
+    ]
+    for row in body:
+        lines.append("| " + " | ".join(row) + " |")
+    return "\n".join(lines)
+
+
+def _merge_table_blocks(table_blocks: List[Block], table_id: str) -> Block:
+    first = table_blocks[0]
+    rows: List[List[str]] = []
+    first_header: List[str] = []
+    all_markdown = True
+
+    for block in table_blocks:
+        block_rows = _parse_markdown_table_rows(block.text)
+        if not block_rows:
+            all_markdown = False
+            break
+        if not rows:
+            rows.extend(block_rows)
+            first_header = _normalize_table_header(block_rows[0])
+            continue
+        next_header = _normalize_table_header(block_rows[0])
+        rows.extend(block_rows[1:] if first_header and next_header == first_header else block_rows)
+
+    if all_markdown:
+        merged_text = _markdown_table_from_rows(rows)
+        headers = rows[0] if rows else []
+        row_count = max(len(rows) - 1, 0)
+    else:
+        merged_text = "\n\n".join((block.text or block.html or "").strip() for block in table_blocks if (block.text or block.html))
+        headers = _table_header(first)
+        row_count = max(len(_parse_markdown_table_rows(merged_text)) - 1, 0)
+
+    page_numbers = [block.page_no for block in table_blocks if block.page_no is not None]
+    page_range = _format_page_range(page_numbers)
+    extra_info = dict(first.extra_info or {})
+    extra_info.update(
+        {
+            "table_id": table_id,
+            "is_cross_page_table": len(set(page_numbers)) > 1,
+            "page_range": page_range,
+            "source_pages": sorted(set(page_numbers)),
+            "headers": headers,
+            "row_count": row_count,
+            "table_part_count": len(table_blocks),
+        }
+    )
+    return replace(
+        first,
+        text=merged_text.strip(),
+        html=None if all_markdown else first.html,
+        extra_info=extra_info,
+    )
+
+
+def merge_cross_page_tables(blocks: List[Block]) -> List[Block]:
+    """Merge conservative cross-page table continuations before section chunking."""
+    if not blocks:
+        return blocks
+
+    merged: List[Block] = []
+    pending: List[Block] = []
+    table_counter_by_doc: Dict[str, int] = {}
+
+    def flush_pending() -> None:
+        nonlocal pending
+        if not pending:
+            return
+        doc_id = pending[0].doc_id or "unknown_doc"
+        idx = table_counter_by_doc.get(doc_id, 0)
+        table_counter_by_doc[doc_id] = idx + 1
+        table_id = f"{doc_id}::table::{idx}"
+        merged.append(_merge_table_blocks(pending, table_id))
+        pending = []
+
+    for block in blocks:
+        if block.block_type != "table":
+            flush_pending()
+            merged.append(block)
+            continue
+        if not pending:
+            pending.append(block)
+            continue
+        if _looks_like_continued_table(pending[-1], block):
+            pending.append(block)
+        else:
+            flush_pending()
+            pending.append(block)
+
+    flush_pending()
+    return merged
+
+
+def split_large_tables(blocks: List[Block], max_table_chars: int = 3000) -> List[Block]:
+    """Split long Markdown tables by rows while repeating the header in each part."""
+    if max_table_chars <= 0 or not blocks:
+        return blocks
+
+    out: List[Block] = []
+    for block in blocks:
+        if block.block_type != "table" or len((block.text or "").strip()) <= max_table_chars:
+            out.append(block)
+            continue
+
+        rows = _parse_markdown_table_rows(block.text)
+        if len(rows) <= 2:
+            out.append(block)
+            continue
+
+        header = rows[0]
+        body_rows = rows[1:]
+        parts: List[List[List[str]]] = []
+        current_rows: List[List[str]] = []
+
+        for row in body_rows:
+            candidate = [header] + current_rows + [row]
+            candidate_text = _markdown_table_from_rows(candidate)
+            if current_rows and len(candidate_text) > max_table_chars:
+                parts.append([header] + current_rows)
+                current_rows = [row]
+            else:
+                current_rows.append(row)
+
+        if current_rows:
+            parts.append([header] + current_rows)
+
+        if len(parts) <= 1:
+            out.append(block)
+            continue
+
+        base_extra = dict(block.extra_info or {})
+        table_id = str(base_extra.get("table_id") or "").strip()
+        for part_index, part_rows in enumerate(parts):
+            part_extra = dict(base_extra)
+            part_extra.update(
+                {
+                    "table_id": table_id,
+                    "table_part_index": part_index,
+                    "table_part_count": len(parts),
+                    "row_count": max(len(part_rows) - 1, 0),
+                    "headers": part_rows[0] if part_rows else base_extra.get("headers", []),
+                }
+            )
+            out.append(
+                replace(
+                    block,
+                    text=_markdown_table_from_rows(part_rows),
+                    html=None,
+                    extra_info=part_extra,
+                )
+            )
+
+    return out
 
 
 def _parse_page_range(page_range: str) -> List[int]:

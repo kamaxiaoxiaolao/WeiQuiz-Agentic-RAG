@@ -191,7 +191,7 @@ def _safe_retrieve(fn: Callable[[str], list[NodeWithScore]], query: str) -> Retr
 
 def _build_reranker(top_n: int) -> DashScopeRerank:
     return DashScopeRerank(
-        model="gte-rerank",
+        model=app_settings.rerank_model,
         top_n=top_n,
         api_key=app_settings.qwen_llm_api_key,
     )

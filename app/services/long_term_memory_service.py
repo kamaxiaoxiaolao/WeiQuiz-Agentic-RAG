@@ -5,6 +5,48 @@ from typing import Any
 from app.config import settings as app_settings
 
 
+MAX_LONG_TERM_MESSAGE_CHARS = 2000
+
+EXPLICIT_MEMORY_MARKERS = (
+    "记住",
+    "请记住",
+    "帮我记住",
+    "remember",
+)
+
+DURABLE_MEMORY_MARKERS = (
+    "我的目标",
+    "我的偏好",
+    "我喜欢",
+    "我不喜欢",
+    "我习惯",
+    "我希望",
+    "我正在",
+    "我当前",
+    "以后",
+    "以后都",
+    "下次",
+    "下次请",
+    "我的项目",
+    "项目是",
+    "系统是",
+    "架构是",
+    "技术栈",
+    "当前记忆系统",
+)
+
+LOW_VALUE_MEMORY_MARKERS = (
+    "[error]",
+    "Answer generation failed",
+    "Request timed out",
+    "无法回答",
+    "知识库内容不相关",
+    "完全不相关",
+    "缺少相关信息",
+    "没有任何关于",
+)
+
+
 class LongTermMemoryService:
     """Optional Mem0 adapter for cross-session semantic memory.
 
@@ -28,6 +70,26 @@ class LongTermMemoryService:
 
     def is_enabled(self) -> bool:
         return bool(self.enabled and (self.api_key or self.mode == "local"))
+
+    @classmethod
+    def should_write(cls, user_message: str, assistant_answer: str) -> bool:
+        """Return whether an exchange is durable enough for long-term memory.
+
+        Mainstream memory systems avoid writing every turn. They keep explicit
+        preferences, goals, stable project facts, and user instructions, while
+        dropping transient Q&A failures and one-off retrieval noise.
+        """
+
+        user_text = (user_message or "").strip()
+        assistant_text = (assistant_answer or "").strip()
+        if not user_text or not assistant_text:
+            return False
+        if cls._is_low_value_content(assistant_text):
+            return False
+        return any(
+            marker in user_text
+            for marker in EXPLICIT_MEMORY_MARKERS + DURABLE_MEMORY_MARKERS
+        )
 
     def search(self, user_id: str, query: str, limit: int | None = None) -> list[str]:
         if not self.is_enabled() or not user_id or not query.strip():
@@ -100,22 +162,13 @@ class LongTermMemoryService:
                 continue
             if LongTermMemoryService._is_low_value_content(content):
                 continue
+            content = content[:MAX_LONG_TERM_MESSAGE_CHARS]
             clean_messages.append({"role": role, "content": content})
         return clean_messages
 
     @staticmethod
     def _is_low_value_content(content: str) -> bool:
-        low_value_markers = (
-            "[error]",
-            "Answer generation failed",
-            "Request timed out",
-            "无法回答",
-            "知识库内容不相关",
-            "完全不相关",
-            "缺少相关信息",
-            "没有任何关于",
-        )
-        return any(marker in content for marker in low_value_markers)
+        return any(marker in content for marker in LOW_VALUE_MEMORY_MARKERS)
 
     @staticmethod
     def _normalize_search_results(raw_results) -> list[str]:
@@ -126,6 +179,7 @@ class LongTermMemoryService:
             raw_results = raw_results.get("results") or raw_results.get("memories") or []
 
         memories: list[str] = []
+        seen: set[str] = set()
         for item in raw_results:
             if isinstance(item, str):
                 memory = item.strip()
@@ -138,6 +192,7 @@ class LongTermMemoryService:
                 ).strip()
             else:
                 memory = str(getattr(item, "memory", "") or getattr(item, "text", "") or "").strip()
-            if memory:
+            if memory and memory not in seen:
+                seen.add(memory)
                 memories.append(memory)
         return memories

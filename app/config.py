@@ -22,7 +22,9 @@ class Settings(BaseSettings):
     milvus_dir: str = "data/index/milvus" # Milvus 向量数据库存放目录
     milvus_uri: str = "http://localhost:19530" # Milvus 服务地址
     milvus_collection: str = "wei_quiz_collection"
-    vector_store_backend: str = "pgvector"
+    vector_store_backend: str = "chroma"
+    chroma_dir: str = "data/index/chroma"
+    chroma_collection: str = "wei_quiz_collection"
     pgvector_table_name: str = "wei_quiz_vectors"
     pgvector_embed_dim: int = 1536
     test_md_path: str = "data/md/data/md/test.md" # 测试 Markdown 文档路径
@@ -41,6 +43,32 @@ class Settings(BaseSettings):
     llm_model: str = "mimo-v2.5-pro"
     router_model: str = "qwen3.6-flash"
     router_timeout_seconds: float = 5.0
+    router_llm_enabled: bool = False
+    clarification_llm_enabled: bool = False
+    llm_gateway_max_retries: int = 0
+    llm_model_generation: str = ""
+    llm_model_router: str = ""
+    llm_model_rewrite: str = ""
+    llm_model_hyde: str = ""
+    llm_model_step_back: str = ""
+    llm_model_decompose: str = ""
+    llm_model_intermediate_synthesis: str = ""
+    llm_model_grounding: str = ""
+    llm_model_memory_summary: str = ""
+    llm_model_lightweight_chat: str = ""
+    llm_timeout_generation_seconds: float = 45.0
+    llm_timeout_intermediate_synthesis_seconds: float = 30.0
+    llm_timeout_rewrite_seconds: float = 8.0
+    llm_timeout_hyde_seconds: float = 10.0
+    llm_timeout_step_back_seconds: float = 10.0
+    llm_timeout_decompose_seconds: float = 10.0
+    llm_timeout_grounding_seconds: float = 15.0
+    llm_timeout_memory_summary_seconds: float = 15.0
+    llm_timeout_lightweight_chat_seconds: float = 30.0
+    generation_max_context_chars: int = 4000
+    generation_max_tokens: int = 1000
+    intermediate_synthesis_max_context_chars: int = 2000
+    intermediate_synthesis_max_tokens: int = 320
     
     # Embedding 模型名称，DashScope 通常提供 text-embedding-v1 或 text-embedding-v2
     # LlamaIndex 可以通过 OpenAIEmbedding 类，指向这个 base_url 来使用 DashScope 的 Embedding 服务
@@ -59,6 +87,7 @@ class Settings(BaseSettings):
     auto_merging_threshold: float = 0.5
     auto_merging_max_chars: int = 4000
     rerank_enabled: bool = True
+    rerank_model: str = "qwen3-rerank"
     rerank_min_candidates: int = 6
     rerank_timeout_seconds: float = 5.0
     bm25_state_path: str = "data/index/bm25_state.json"
@@ -122,6 +151,17 @@ class Settings(BaseSettings):
     web_search_enabled: bool = False
     web_search_provider: str = "mcp"
     web_search_top_k: int = 5
+    web_search_mock_enabled: bool = False
+    web_search_api_key: str = ""
+    google_search_cx: str = ""
+    mcp_server_url: str = ""
+    mcp_api_key: str = ""
+
+    # --- Observability / Tracing ---
+    observability_enabled: bool = False
+    observability_provider: str = "phoenix"
+    phoenix_project_name: str = "weiquiz-agentic-rag"
+    phoenix_endpoint: str = "http://localhost:6006/v1/traces"
 
 # 创建一个 Settings 实例，供全局使用
 settings = Settings()

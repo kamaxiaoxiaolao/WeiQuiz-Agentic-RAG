@@ -106,7 +106,7 @@ def setup_rerank_query_engine():
     # 3. 配置重排器
     # reranker = FlagEmbeddingReranker(model="BAAI/bge-reranker-base", top_n=3)
     reranker = DashScopeRerank(
-        model="gte-rerank", # 百炼提供的重排模型名称
+        model=settings.rerank_model, # 百炼提供的重排模型名称
         top_n=3,
         api_key=settings.llm_api_key # 复用你已有的 API Key
     )
@@ -172,7 +172,7 @@ def setup_hybrid_query_engine():
         use_async=True,
     )
     # 6. 【重排】使用 BGE Reranker 对融合结果进行重排
-    reranker = DashScopeRerank(model="gte-rerank", top_n=3, api_key=settings.llm_api_key)
+    reranker = DashScopeRerank(model=settings.rerank_model, top_n=3, api_key=settings.llm_api_key)
     # 7. 构建最终查询引擎
     query_engine = RetrieverQueryEngine.from_args(
         retriever=fusion_retriever,

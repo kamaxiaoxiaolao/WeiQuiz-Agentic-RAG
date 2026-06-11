@@ -4,17 +4,103 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="c46ec194-7980-4bdc-9f15-afcd69936a1a" name="更改" comment="v0.4.0 初步完成整体链路">
-      <change afterPath="$PROJECT_DIR$/docx/agent-rag-learning-and-optimization-roadmap.md" afterDir="false" />
+    <list default="true" id="c46ec194-7980-4bdc-9f15-afcd69936a1a" name="更改" comment="v0.5.0 初步进行优化">
+      <change afterPath="$PROJECT_DIR$/CONTRIBUTING.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/LICENSE" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/app/eval/build_cn_finance_node_qrels.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/app/eval/eval_cn_finance_retrieval.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/app/ingest/rebuild_from_audit_sections.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/app/kb/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/app/kb/router.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/app/llm/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/app/llm/gateway.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/app/observability.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/app/retrieval/table_context.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/app/tools/mcp_client.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/app/tools/models.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/app/tools/skill.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/data/.gitkeep" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/GraphRAG.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/architecture.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/memory-system-mainstream.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/tool-system-implementation.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/frontend/src/components/AdminPanel.vue" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/frontend/src/views/AdminView.vue" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/scripts/audit_cn_finance_eval_quality.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/scripts/convert_pdf_to_md.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/scripts/convert_sec_html_to_md.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/scripts/download_cninfo_reports.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/scripts/download_finance_pdfs.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/scripts/download_sec_filings.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/scripts/generate_cn_finance_eval_v2.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/scripts/generate_cn_finance_golden_eval.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/scripts/refine_cn_finance_eval_questions.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tests/test_memory_system.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tests/test_table_context.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tests/test_table_merge.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tests/test_table_split.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tests/test_tools_system.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.env.example" beforeDir="false" afterPath="$PROJECT_DIR$/.env.example" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/agent/enterprise_agentic_rag_project_plan.md" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/app/agentic/controller.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/agentic/controller.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/agentic/grounding.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/agentic/grounding.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/agentic/hyde.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/agentic/hyde.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/agentic/memory.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/agentic/memory.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/agentic/node_synthesizer.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/agentic/node_synthesizer.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/agentic/query_rewrite.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/agentic/query_rewrite.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/agentic/router.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/agentic/router.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/agentic/step_back.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/agentic/step_back.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/agentic/sub_question.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/agentic/sub_question.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/api.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/api.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/auth/repository.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/auth/repository.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/config.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/config.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/components/ChatPanel.vue" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/ChatPanel.vue" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/components/DebugPanel.vue" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/DebugPanel.vue" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/eval/eval_retrieval_ablation.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/eval/eval_retrieval_ablation.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/ingest/document_parser.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/ingest/document_parser.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/ingest/milvus_loader.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/ingest/milvus_loader.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/ingest/sync.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/ingest/sync.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/metadata_schema.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/metadata_schema.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/query.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/query.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/rag_milvus.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/rag_milvus.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/retrieval/cache.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/retrieval/cache.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/services/long_term_memory_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/services/long_term_memory_service.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/services/memory_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/services/memory_service.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/storage/auth_models.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/storage/auth_models.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/tools/planner.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/tools/planner.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/tools/registry.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/tools/registry.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/tools/web_search.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/tools/web_search.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docker-compose.yml" beforeDir="false" afterPath="$PROJECT_DIR$/docker-compose.yml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/agent-controller-design.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/mem0-long-term-memory.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/project-summary.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/rag-interview-question-driven-roadmap.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docx/AgenticRAG差距分析报告.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docx/RAG 系统评估计划书.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docx/Redis学习笔记.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docx/WeiQuiz 多轮对话与 SSE 实现.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docx/agent-rag-learning-and-optimization-roadmap.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docx/agentic-rag-gap-priority-report.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docx/auth-rbac-project-plan.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docx/memory-system-and-compression.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docx/mentor-prompt-brief.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docx/mentor-prompt-detailed.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docx/智能体提示词.txt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docx/项目开发日志.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docx/项目计划书.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/README.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/assets/hero.png" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/assets/vite.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/assets/vue.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/AppHeader.vue" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/AppHeader.vue" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/KnowledgeSidebar.vue" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/KnowledgeSidebar.vue" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/router/index.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/router/index.ts" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/views/ChatView.vue" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/views/ChatView.vue" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/others/main.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/pyproject.toml" beforeDir="false" afterPath="$PROJECT_DIR$/pyproject.toml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/test_metadata_schema.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_metadata_schema.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/uv.lock" beforeDir="false" afterPath="$PROJECT_DIR$/uv.lock" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -47,31 +133,31 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "ModuleVcsDetector.initialDetectionPerformed": "true",
-    "Python 测试.test_router.TestChitchat 的 Python 测试.executor": "Run",
-    "Python 测试.test_router.TestFallback 的 Python 测试.executor": "Run",
-    "Python 测试.test_router.TestSqlQuery 的 Python 测试.executor": "Run",
-    "Python.eval_retrieval.executor": "Run",
-    "Python.milvus_loader.executor": "Run",
-    "Python.sync.executor": "Run",
-    "RunOnceActivity.OpenProjectViewOnStart": "true",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "RunOnceActivity.git.unshallow": "true",
-    "WebServerToolWindowFactoryState": "false",
-    "git-widget-placeholder": "master",
-    "kotlin-language-version-configured": "true",
-    "last_opened_file_path": "D:/study/pycharm/workspace/learn-claude-code-main",
-    "node.js.detected.package.eslint": "true",
-    "node.js.detected.package.tslint": "true",
-    "node.js.selected.package.eslint": "(autodetect)",
-    "node.js.selected.package.tslint": "(autodetect)",
-    "nodejs_package_manager_path": "npm",
-    "settings.editor.selected.configurable": "preferences.pluginManager",
-    "vue.rearranger.settings.migration": "true"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
+    &quot;Python 测试.test_router.TestChitchat 的 Python 测试.executor&quot;: &quot;Run&quot;,
+    &quot;Python 测试.test_router.TestFallback 的 Python 测试.executor&quot;: &quot;Run&quot;,
+    &quot;Python 测试.test_router.TestSqlQuery 的 Python 测试.executor&quot;: &quot;Run&quot;,
+    &quot;Python.eval_retrieval.executor&quot;: &quot;Run&quot;,
+    &quot;Python.milvus_loader.executor&quot;: &quot;Run&quot;,
+    &quot;Python.sync.executor&quot;: &quot;Run&quot;,
+    &quot;RunOnceActivity.OpenProjectViewOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;WebServerToolWindowFactoryState&quot;: &quot;false&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;master&quot;,
+    &quot;kotlin-language-version-configured&quot;: &quot;true&quot;,
+    &quot;last_opened_file_path&quot;: &quot;D:/study/pycharm/workspace/super_biz_agent_py-release-2026-05-17&quot;,
+    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
+    &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
+    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
+    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
+    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;preferences.pluginManager&quot;,
+    &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
   }
-}]]></component>
+}</component>
   <component name="RecentsManager">
     <key name="MoveFile.RECENT_KEYS">
       <recent name="D:\study\pycharm\workspace\bigModel\docx" />
@@ -310,7 +396,15 @@
       <option name="project" value="LOCAL" />
       <updated>1780052279606</updated>
     </task>
-    <option name="localTasksCounter" value="13" />
+    <task id="LOCAL-00013" summary="v0.4.0 初步完成整体链路">
+      <option name="closed" value="true" />
+      <created>1780456848993</created>
+      <option name="number" value="00013" />
+      <option name="presentableId" value="LOCAL-00013" />
+      <option name="project" value="LOCAL" />
+      <updated>1780456848993</updated>
+    </task>
+    <option name="localTasksCounter" value="14" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -336,7 +430,8 @@
     <MESSAGE value="v0.2.0 开始记忆系统优化" />
     <MESSAGE value="v0.3.0 开始评测系统优化" />
     <MESSAGE value="v0.4.0 初步完成整体链路" />
-    <option name="LAST_COMMIT_MESSAGE" value="v0.4.0 初步完成整体链路" />
+    <MESSAGE value="v0.5.0 初步进行优化" />
+    <option name="LAST_COMMIT_MESSAGE" value="v0.5.0 初步进行优化" />
   </component>
   <component name="github-copilot-workspace">
     <instructionFileLocations>

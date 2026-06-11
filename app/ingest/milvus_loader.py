@@ -37,6 +37,8 @@ try:
         clean_blocks,
         clean_blocks_by_file_type,
         fix_titles,
+        merge_cross_page_tables,
+        split_large_tables,
         probe_pdf_text_layer,
         analyze_block_quality,
     )
@@ -49,6 +51,8 @@ except Exception:
     clean_blocks = None
     clean_blocks_by_file_type = None
     fix_titles = None
+    merge_cross_page_tables = None
+    split_large_tables = None
     probe_pdf_text_layer = None
     analyze_block_quality = None
 
@@ -248,6 +252,18 @@ def _build_doc_quality_map(documents: List[Document]) -> Dict[str, dict]:
     return quality_by_doc
 
 
+def _print_progress(label: str, current: int, total: int, detail: str = "", width: int = 28) -> None:
+    if total <= 0:
+        return
+    current = min(current, total)
+    filled = int(width * current / total)
+    bar = "#" * filled + "-" * (width - filled)
+    percent = current / total * 100
+    suffix = f" {detail}" if detail else ""
+    end = "\n" if current >= total else "\r"
+    print(f"{label} [{bar}] {current}/{total} {percent:5.1f}%{suffix}", end=end, flush=True)
+
+
 class IngestionStageError(RuntimeError):
     def __init__(self, stage: str, message: str):
         super().__init__(message)
@@ -368,6 +384,8 @@ def load_documents(document_paths: List[str], path_to_doc_id: Dict[str, str]) ->
         or clean_blocks is None
         or clean_blocks_by_file_type is None
         or fix_titles is None
+        or merge_cross_page_tables is None
+        or split_large_tables is None
         or probe_pdf_text_layer is None
         or analyze_block_quality is None
     ):
@@ -380,8 +398,10 @@ def load_documents(document_paths: List[str], path_to_doc_id: Dict[str, str]) ->
     os.makedirs(audit_dir, exist_ok=True)
     os.makedirs(section_audit_dir, exist_ok=True)
 
-    for parser_path in parser_paths:
+    total_parser_paths = len(parser_paths)
+    for parser_index, parser_path in enumerate(parser_paths, start=1):
         rel_path = _normalize_rel_path(parser_path, app_settings.docs_dir)
+        _print_progress("[Parse]", parser_index - 1, total_parser_paths, rel_path)
         doc_id = path_to_doc_id.get(rel_path) or os.path.splitext(os.path.basename(rel_path))[0]
         file_type = os.path.splitext(parser_path)[1].lower()
         quality_metadata: Dict[str, object] = {}
@@ -400,6 +420,8 @@ def load_documents(document_paths: List[str], path_to_doc_id: Dict[str, str]) ->
                 parser_path,
                 doc_id=doc_id,
                 source_path=rel_path,
+                use_hi_res_pdf=getattr(app_settings, "ocr_enabled", False),
+                infer_table_structure_pdf=app_settings.ocr_infer_table_structure,
             )
         except Exception as e:
             raise IngestionStageError("parse", f"{rel_path}: {e}") from e
@@ -407,6 +429,8 @@ def load_documents(document_paths: List[str], path_to_doc_id: Dict[str, str]) ->
         try:
             blocks = clean_blocks_by_file_type(blocks, file_type)
             blocks = fix_titles(blocks)
+            blocks = merge_cross_page_tables(blocks)
+            blocks = split_large_tables(blocks)
             quality_metadata.update(
                 analyze_block_quality(
                     blocks,
@@ -437,6 +461,7 @@ def load_documents(document_paths: List[str], path_to_doc_id: Dict[str, str]) ->
             documents.extend(section_documents)
         except Exception as e:
             raise IngestionStageError("parse", f"{rel_path}: {e}") from e
+        _print_progress("[Parse]", parser_index, total_parser_paths, rel_path)
 
     return documents
 
@@ -580,13 +605,28 @@ def get_pgvector_vector_store(settings: app_settings, table_name: str, dim: int 
     )
 
 
+def get_chroma_vector_store(settings: app_settings, collection_name: str) -> Any:
+    import chromadb
+    from llama_index.vector_stores.chroma import ChromaVectorStore
+
+    os.makedirs(settings.chroma_dir, exist_ok=True)
+    client = chromadb.PersistentClient(path=settings.chroma_dir)
+    collection = client.get_or_create_collection(collection_name)
+    return ChromaVectorStore(chroma_collection=collection)
+
+
 def get_default_vector_store(
     settings: app_settings,
     index_dir: str,
     collection_name: str,
     dim: int = 1536,
 ) -> Any:
-    backend = (settings.vector_store_backend or "pgvector").strip().lower()
+    backend = (settings.vector_store_backend or "chroma").strip().lower()
+    if backend == "chroma":
+        return get_chroma_vector_store(
+            settings=settings,
+            collection_name=settings.chroma_collection or collection_name,
+        )
     if backend in {"pgvector", "postgres", "postgresql"}:
         return get_pgvector_vector_store(
             settings=settings,
@@ -762,11 +802,13 @@ def apply_diff_to_milvus(
             raise
 
         try:
+            print("\n[Chunk] 正在生成层级 chunk...")
             chunked_nodes = chunk_documents_hierarchical(loaded_docs, chunk_overlap)
             index_nodes = select_index_nodes(chunked_nodes)
             report["section_stats"] = _build_section_stats(loaded_docs)
             report["hierarchy_stats"] = _build_hierarchy_stats(chunked_nodes)
             report["chunk_stats"] = _build_chunk_stats(index_nodes, path_to_file_type)
+            print(f"[Chunk] 完成：sections={len(loaded_docs)}, hierarchy_nodes={len(chunked_nodes)}, leaf_nodes={len(index_nodes)}")
         except Exception as e:
             for item in added_items:
                 report["documents"].append(_report_item(item, "added", "failed", stage="chunk", error=str(e)))
@@ -775,7 +817,7 @@ def apply_diff_to_milvus(
             _finalize_and_save_ingestion_report(report)
             raise
 
-        print("\n--- 分片后的 TextNode 详情 ---")
+        print("\n--- 分片后的 TextNode 样例（最多 5 个） ---")
         doc_chunk_counters: Dict[str, int] = {}
         doc_block_counts: Dict[str, int] = {}
         doc_quality = _build_doc_quality_map(loaded_docs)
@@ -784,6 +826,7 @@ def apply_diff_to_milvus(
             doc_id = doc.metadata.get("doc_id", "unknown_doc")
             doc_block_counts[doc_id] = doc_block_counts.get(doc_id, 0) + (doc.metadata.get("block_count") or 1)
 
+        sample_limit = 5
         for i, node in enumerate(chunked_nodes):
             doc_id = node.metadata.get("doc_id", "unknown_doc")
 
@@ -797,11 +840,15 @@ def apply_diff_to_milvus(
             node.metadata["chunk_id"] = stable_chunk_id
             node.metadata["chunk_index"] = idx
 
-            print(f"Node {i+1} (ID: {node.id_}, 来自: {node.metadata.get('source_path')}):")
-            print("--------------------------------------------------")
-            print(f"内容:\n{node.text[:200]}..." if len(node.text) > 200 else f"内容:\n{node.text}")
-            print(f"元数据:\n{node.metadata}")
-            print("--------------------------------------------------\n")
+            if i < sample_limit:
+                print(f"Node {i+1} (ID: {node.id_}, 来自: {node.metadata.get('source_path')}):")
+                print("--------------------------------------------------")
+                print(f"内容:\n{node.text[:200]}..." if len(node.text) > 200 else f"内容:\n{node.text}")
+                print(f"元数据:\n{node.metadata}")
+                print("--------------------------------------------------\n")
+
+        if len(chunked_nodes) > sample_limit:
+            print(f"... 已省略 {len(chunked_nodes) - sample_limit} 个节点详情")
 
         print(f"✅ [Upsert] 正在将 {len(chunked_nodes)} 个新节点注册到 Docstore 并注入向量库...")
 
@@ -813,7 +860,9 @@ def apply_diff_to_milvus(
 
         if parent_store is not None:
             try:
+                print(f"[Store] 正在写入 PostgreSQL parent store：{len(chunked_nodes)} nodes")
                 parent_store.upsert_nodes(chunked_nodes)
+                print("[Store] PostgreSQL parent store 写入完成")
             except Exception as e:
                 for item in added_items:
                     report["documents"].append(_report_item(item, "added", "failed", stage="write_chunk_store", error=str(e)))
@@ -823,7 +872,9 @@ def apply_diff_to_milvus(
                 raise
 
         try:
+            print(f"[Docstore] 正在注册 leaf nodes：{len(index_nodes)}")
             index.docstore.add_documents(index_nodes, allow_update=True)
+            print("[Docstore] 注册完成")
         except Exception as e:
             for item in added_items:
                 report["documents"].append(_report_item(item, "added", "failed", stage="write_docstore", error=str(e)))
@@ -833,7 +884,9 @@ def apply_diff_to_milvus(
             raise
 
         try:
+            print(f"[Vector] 正在写入向量库：{len(index_nodes)} leaf nodes")
             index.insert_nodes(index_nodes)
+            print("[Vector] 向量库写入完成")
         except Exception as e:
             for item in added_items:
                 report["documents"].append(_report_item(item, "added", "failed", stage="insert_vector_store", error=str(e)))
@@ -843,6 +896,7 @@ def apply_diff_to_milvus(
             raise
 
         try:
+            print(f"[BM25State] 正在更新 BM25 状态：{len(index_nodes)} leaf nodes")
             added_to_bm25 = increment_add_bm25_nodes(index_nodes)
             print(f"✅ [BM25State] Added {added_to_bm25} new leaf chunks to BM25 statistics")
         except Exception as e:

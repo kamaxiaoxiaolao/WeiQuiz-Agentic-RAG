@@ -13,9 +13,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
-from openai import OpenAI
-
 from app.config import settings
+from app.llm import LLMTask, get_llm_gateway
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +66,28 @@ CHITCHAT_PATTERNS: list[re.Pattern] = [
         r"^(在吗|还在吗|可以开始吗)\s*[!！。,.，？?]*$",
     ]
 ]
+
+CHITCHAT_COMPACT_EXACT: set[str] = {
+    "你好",
+    "您好",
+    "谢谢",
+    "感谢",
+    "再见",
+    "拜拜",
+    "你是谁",
+    "你能做什么",
+    "你可以做什么",
+    "介绍一下你自己",
+    "你好你能做什么",
+    "你好你可以做什么",
+}
+
+CHITCHAT_COMPACT_CONTAINS: tuple[str, ...] = (
+    "你能做什么",
+    "你可以做什么",
+    "你是谁",
+    "介绍一下你自己",
+)
 
 MEMORY_CHAT_PATTERNS: list[re.Pattern] = [
     re.compile(p, re.IGNORECASE)
@@ -185,6 +206,19 @@ def _has_any(text: str, keywords: set[str]) -> bool:
 
 
 def _rule_chitchat(query: str) -> Optional[RouteResult]:
+    compact = re.sub(r"\s+", "", query or "").strip("。！？!?，,；;：:")
+    if compact in CHITCHAT_COMPACT_EXACT or (
+        len(compact) <= 14 and any(marker in compact for marker in CHITCHAT_COMPACT_CONTAINS)
+    ):
+        return RouteResult(
+            IntentType.CHITCHAT,
+            "rule",
+            "命中闲聊或助手能力询问",
+            query_strategy=QueryStrategy.CHITCHAT,
+            complexity="simple",
+            tools=[],
+        )
+
     if (
         (
             any(pattern.search(query) for pattern in MEMORY_WRITE_PATTERNS)
@@ -359,10 +393,6 @@ def _parse_llm_response(content: str) -> dict:
     return json.loads(content)
 
 
-def _router_model_name() -> str:
-    return getattr(settings, "router_model", None) or settings.llm_model
-
-
 def _normalize_enum_value(value: object) -> str:
     return str(value or "").strip().lower()
 
@@ -370,18 +400,11 @@ def _normalize_enum_value(value: object) -> str:
 def llm_based_route(query: str) -> RouteResult:
     """Classify intent through an OpenAI-compatible LLM endpoint."""
 
-    client = OpenAI(
-        api_key=settings.qwen_llm_api_key,
-        base_url=settings.router_api_base,
-        timeout=settings.router_timeout_seconds,
-        max_retries=0,
-    )
-
     prompt = LLM_ROUTE_PROMPT.format(query=query)
 
     try:
-        response = client.chat.completions.create(
-            model=_router_model_name(),
+        response = get_llm_gateway().chat_completion(
+            task=LLMTask.ROUTER,
             messages=[{"role": "user", "content": prompt}],
             temperature=0,
             max_tokens=150,
@@ -454,6 +477,24 @@ def route_query(query: str) -> RouteResult:
             query[:80],
         )
         return rule_result
+
+    if not getattr(settings, "router_llm_enabled", False):
+        fallback_result = RouteResult(
+            IntentType.KNOWLEDGE_BASE,
+            "heuristic",
+            "LLM Router disabled; fallback to direct knowledge-base retrieval",
+            confidence=0.6,
+            query_strategy=QueryStrategy.DIRECT,
+            complexity="single_hop",
+            tools=["kb_search"],
+        )
+        logger.info(
+            "[Router] heuristic | intent=%s | reason=%s | query=%s",
+            fallback_result.intent.value,
+            fallback_result.reason,
+            query[:80],
+        )
+        return fallback_result
 
     llm_result = llm_based_route(query)
     logger.info(

@@ -12,9 +12,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
-from openai import OpenAI
-
-from app.config import settings
+from app.llm import LLMTask, get_llm_gateway
 
 logger = logging.getLogger(__name__)
 
@@ -65,9 +63,8 @@ def llm_decompose(query: str, max_questions: int = 4) -> Optional[DecompositionR
         return DecompositionResult(original=query, sub_questions=[], reason="empty query")
 
     try:
-        client = OpenAI(api_key=settings.llm_api_key, base_url=settings.llm_api_base)
-        response = client.chat.completions.create(
-            model=settings.llm_model,
+        response = get_llm_gateway().chat_completion(
+            task=LLMTask.DECOMPOSE,
             messages=[{"role": "user", "content": DECOMPOSE_PROMPT.format(query=query)}],
             temperature=0,
             max_tokens=320,

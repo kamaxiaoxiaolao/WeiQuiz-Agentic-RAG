@@ -201,6 +201,8 @@ class SourceNodePayload(BaseModel):
     parent_section_title: str = ""
     parent_page_range: str = ""
     child_chunk_id: str = ""
+    table_id: str = ""
+    table_page_range: str = ""
     auto_merged: bool = False
     merge_ratio: Optional[float] = None
     merged_child_count: Optional[int] = None
@@ -217,6 +219,8 @@ class SourceNodePayload(BaseModel):
         page_range = _first_text(metadata, "parent_page_range", "page_range")
         section_title = _first_text(metadata, "parent_section_title", "section_title")
         child_chunk_id = _first_text(metadata, "child_chunk_id", "chunk_id")
+        table_id = _first_text(metadata, "table_id")
+        table_page_range = _first_text(metadata, "table_page_range")
 
         return cls(
             text=str(getattr(node, "text", "") or ""),
@@ -231,6 +235,8 @@ class SourceNodePayload(BaseModel):
             parent_section_title=section_title,
             parent_page_range=page_range,
             child_chunk_id=child_chunk_id,
+            table_id=table_id,
+            table_page_range=table_page_range,
             auto_merged=bool(metadata.get("auto_merged", False)),
             merge_ratio=_safe_float(metadata.get("merge_ratio")),
             merged_child_count=_safe_int(metadata.get("merged_child_count")),
