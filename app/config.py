@@ -40,8 +40,8 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     # 阿里云 DashScope 提供的模型名称，例如 Qwen 系列（用于文本生成）
     # 请根据你在百炼开通的具体模型服务进行选择，例如：qwen-turbo, qwen-plus, qwen-max
-    llm_model: str = "mimo-v2.5-pro"
-    router_model: str = "qwen3.6-flash"
+    llm_model: str = "mimo-v2.5"
+    router_model: str = "mimo-v2.5-pro"
     router_timeout_seconds: float = 5.0
     router_llm_enabled: bool = False
     clarification_llm_enabled: bool = False
@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     llm_model_intermediate_synthesis: str = ""
     llm_model_grounding: str = ""
     llm_model_memory_summary: str = ""
-    llm_model_lightweight_chat: str = ""
+    llm_model_lightweight_chat: str = "mimo-v2.5"
     llm_timeout_generation_seconds: float = 45.0
     llm_timeout_intermediate_synthesis_seconds: float = 30.0
     llm_timeout_rewrite_seconds: float = 8.0
@@ -65,6 +65,7 @@ class Settings(BaseSettings):
     llm_timeout_grounding_seconds: float = 15.0
     llm_timeout_memory_summary_seconds: float = 15.0
     llm_timeout_lightweight_chat_seconds: float = 30.0
+    llm_lightweight_chat_max_tokens: int = 320
     generation_max_context_chars: int = 4000
     generation_max_tokens: int = 1000
     intermediate_synthesis_max_context_chars: int = 2000

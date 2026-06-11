@@ -71,7 +71,7 @@ from app.auth.repository import (
 )
 from app.auth.security import hash_password
 from app.auth.dependencies import get_current_user, require_admin
-from app.storage.auth_models import User, ChatSession
+from app.storage.auth_models import User
 from sqlalchemy.orm import Session
 
 
@@ -92,15 +92,6 @@ def _docs_root() -> Path:
 
 def _index_state_path() -> Path:
     return Path(app_settings.index_dir) / "ingest_state.json"
-
-
-def _safe_docs_file_path(filename: str) -> Path:
-    safe_name = _safe_upload_filename(filename)
-    docs_dir = _docs_root()
-    target = (docs_dir / safe_name).resolve()
-    if target.parent != docs_dir:
-        raise HTTPException(status_code=400, detail="invalid document path")
-    return target
 
 
 def _safe_docs_relative_path(document_path: str) -> Path:
@@ -201,6 +192,7 @@ def _stream_lightweight_chat(message: str, memory_context) -> Iterator[str]:
             {"role": "user", "content": prompt},
         ],
         temperature=0.2,
+        max_tokens=app_settings.llm_lightweight_chat_max_tokens,
     )
     for chunk in response:
         if not chunk.choices:
@@ -431,10 +423,6 @@ def _write_audit_log(
 
 def _source_node_payload(node) -> dict:
     return SourceNodePayload.from_node(node).to_api_dict()
-
-
-def _trace_payload(trace: WorkflowTrace | None) -> dict:
-    return trace.to_dict() if trace is not None else {}
 
 
 def _route_only_trace(route: RouteResult, query: str, quality: str = "skipped") -> dict:
@@ -827,8 +815,14 @@ async def admin_update_user(
     return _user_payload(updated)
 
 
-@app.post("/query")
+@app.post("/query", deprecated=True)
 async def query_rag(request: QueryRequest):
+    """Legacy single-turn query endpoint.
+
+    The Vue application uses /chat/stream. This endpoint is kept only for the
+    old Streamlit debug client and quick manual checks.
+    """
+
     query_engine = getattr(app.state, "query_engine", None)
     if query_engine is None:
         return {"error": "RAG query engine is not initialized."}, 500
