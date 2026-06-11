@@ -1,8 +1,10 @@
-# Contributing
+# 贡献指南
 
-Thanks for your interest in WeiQuiz.
+感谢你关注 WeiQuiz。
 
-## Development Setup
+## 本地开发
+
+后端：
 
 ```bash
 cp .env.example .env
@@ -11,7 +13,7 @@ uv sync
 uv run uvicorn app.api:app --reload
 ```
 
-Frontend:
+前端：
 
 ```bash
 cd frontend
@@ -19,21 +21,29 @@ npm install
 npm run dev
 ```
 
-## Before Opening a Pull Request
+## 提交 Pull Request 前
 
-- Keep changes focused and easy to review.
-- Add or update tests when behavior changes.
-- Do not commit `.env`, local documents, indexes, generated data, or API keys.
-- Run relevant tests with `uv run pytest`.
-- For frontend changes, run `npm run build` inside `frontend/`.
+- 保持改动聚焦，避免把无关重构混在一起。
+- 行为变化需要补充或更新测试。
+- 不要提交 `.env`、本地文档、索引文件、生成数据或 API Key。
+- 后端改动请运行相关测试，例如 `uv run pytest`。
+- 前端改动请在 `frontend/` 下运行 `npm run build`。
 
-## Code Style
+## 代码风格
 
-- Follow the existing module boundaries.
-- Prefer explicit data contracts over ad hoc dictionaries for API and retrieval payloads.
-- Keep RAG workflow logic testable without requiring external services.
-- Add short comments only where they explain non-obvious decisions.
+- 遵循现有模块边界，优先复用项目已有抽象。
+- API、检索结果和 metadata 尽量使用明确的数据结构，不要随意传递松散字典。
+- RAG Workflow 逻辑应尽量可测试，不强依赖外部服务。
+- 注释只解释不明显的设计决策，避免重复描述代码本身。
 
-## Documentation
+## 文档规范
 
-Update `README.md` for user-facing setup or feature changes. Put deeper implementation notes under `docs/`.
+- 用户可见的安装、启动、功能变化，请更新 `README.md`。
+- 深入设计、排障和实现细节放到 `docs/`。
+- 示例配置请同步更新 `.env.example`。
+
+## 安全要求
+
+- 不要提交真实密钥、Token、内部文档或私有数据。
+- 涉及 SQL、工具调用、权限、文件路径处理的改动，需要额外说明安全边界。
+- 如果发现安全问题，请先私下联系维护者，不要直接公开漏洞细节。

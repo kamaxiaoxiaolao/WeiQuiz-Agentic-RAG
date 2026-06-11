@@ -1,8 +1,8 @@
-# WeiQuiz Frontend
+# WeiQuiz 前端
 
-Vue 3 frontend for the WeiQuiz Agentic RAG application.
+这是 WeiQuiz Agentic RAG 应用的 Vue 3 前端。
 
-## Stack
+## 技术栈
 
 - Vue 3
 - TypeScript
@@ -11,23 +11,31 @@ Vue 3 frontend for the WeiQuiz Agentic RAG application.
 - Tailwind CSS
 - lucide-vue-next
 
-## Development
+## 本地开发
 
 ```bash
 npm install
 npm run dev
 ```
 
-The frontend expects the FastAPI backend to be available from the same origin in production or proxied during local development.
+开发时需要后端 FastAPI 服务可访问。生产环境中，前端通常与后端同源部署，或通过反向代理转发 API 请求。
 
-## Build
+## 构建
 
 ```bash
 npm run build
 ```
 
-## Main Views
+## 主要视图
 
-- `LoginView.vue`: authentication entry.
-- `ChatView.vue`: chat workspace with sessions, knowledge-base panel, and debug panel.
-- `AdminView.vue`: admin operations for users and audit-related workflows.
+- `LoginView.vue`：登录和认证入口。
+- `ChatView.vue`：聊天工作台，包含会话列表、知识库面板和调试面板。
+- `AdminView.vue`：管理员功能，包括用户管理和审计相关工作流。
+
+## 主要组件
+
+- `ChatPanel.vue`：聊天输入、SSE 解析、流式渲染和引用展示。
+- `SessionList.vue`：会话列表、新建会话和切换会话。
+- `KnowledgeSidebar.vue`：文档上传、知识库状态和入库任务展示。
+- `DebugPanel.vue`：展示路由、Trace、Source Nodes 等调试信息。
+- `AppHeader.vue`：顶部导航和用户信息。

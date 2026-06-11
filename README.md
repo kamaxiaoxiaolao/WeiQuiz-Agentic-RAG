@@ -10,7 +10,20 @@
 
 WeiQuiz 是一个端到端的企业级 Agentic RAG 项目，覆盖文档解析、增量入库、混合检索、Query Planning、多轮记忆、SSE 流式回答、引用溯源、可观测 Trace、JWT 鉴权、RBAC 权限和知识库管理。
 
-这个项目不是简单的“向量库 + Prompt”Demo，而是围绕真实 RAG 系统里的工程问题设计：文档解析质量不可控、Chunk 上下文不足、召回不稳定、复杂问题需要多步检索、答案容易幻觉、多轮对话丢上下文、排障困难、用户数据需要隔离。
+它不是简单的“向量库 + Prompt”Demo，而是围绕真实 RAG 系统里的工程问题设计：文档解析质量不可控、Chunk 上下文不足、召回不稳定、复杂问题需要多步检索、答案容易幻觉、多轮对话丢上下文、排障困难、用户数据需要隔离。
+
+## 项目定位
+
+WeiQuiz 适合用于：
+
+- 学习企业级 RAG 系统的完整链路。
+- 展示 Agentic RAG、混合检索、多层记忆和可观测工程能力。
+- 作为私有知识库问答、文档助手、企业制度问答、报告分析助手的基础框架。
+- 面试或作品集展示，体现从 Demo 到工程化系统的设计能力。
+
+一句话介绍：
+
+> WeiQuiz 是一个企业级 Agentic RAG 知识库问答系统。它不仅实现了文档向量检索和 LLM 回答，还加入了 Query Router、AgentController、混合检索、层级 Chunk、Rerank、多轮记忆、SSE Trace、权限隔离和入库质量报告，重点解决真实 RAG 系统中召回不准、上下文不足、复杂问题拆解、答案幻觉和排障困难的问题。
 
 ## 项目亮点
 
@@ -123,7 +136,30 @@ root chunk
 
 前端提供聊天面板、知识库面板和 Debug Panel，方便演示“系统为什么这么回答”，也方便排查 RAG 效果。
 
-### 7. 具备基础生产化能力
+### 7. 统一 LLM Gateway，便于模型切换和任务隔离
+
+项目把路由、改写、HyDE、Step-back、分解、生成、Grounding、记忆摘要等 LLM 调用统一收敛到 LLM Gateway：
+
+- 不同任务可以配置不同模型。
+- 每类任务可以设置独立 timeout。
+- 统一记录调用耗时、模型、输入字符量和失败信息。
+- 保持 OpenAI-compatible API 形态，方便切换 DashScope、OpenAI-compatible 服务或私有模型网关。
+
+这避免了大模型调用散落在各个模块里，后续做成本控制、超时降级和模型路由会更容易。
+
+### 8. 工具调用链路工程化
+
+项目设计了 `Router -> Controller -> Tool Planner -> Tool Registry -> Tool Handler` 工具链路：
+
+- Router 判断是否需要工具。
+- Controller 切换到 `TOOL_CALL` 模式。
+- Tool Planner 规划工具和参数。
+- Tool Registry 做权限检查、参数校验、默认值填充、同步/异步执行和结果标准化。
+- API 将工具结果写入 trace 和会话历史。
+
+这部分重点不是简单写一个函数调用入口，而是把工具调用需要的规划、校验、执行、结果标准化和 Trace 记录拆开，后续接入真实业务工具时不需要改动主聊天链路。
+
+### 9. 具备基础生产化能力
 
 项目包含：
 
@@ -138,6 +174,124 @@ root chunk
 
 这让项目更像完整应用，而不是 notebook 或命令行 Demo。
 
+### 10. 评测脚本与质量闭环
+
+项目提供了检索评估、RAGAS 评测、中文金融文档评测和 retrieval ablation 相关脚本，用于分析不同检索策略、重排策略和上下文扩展策略对回答质量的影响。
+
+这些脚本为后续构建自动化评测报告、检索消融实验和质量回归检查提供基础。
+
+## 整体架构
+
+### 分层架构图
+
+```mermaid
+flowchart TB
+  User["用户 / 管理员"] --> Frontend["Vue 3 前端<br/>聊天 / 会话 / 知识库 / 调试面板"]
+  Frontend --> API["FastAPI 后端<br/>Auth / Session / Chat / Documents / Admin"]
+
+  API --> Auth["认证与权限层<br/>JWT / RBAC / Session Ownership"]
+  API --> Memory["记忆服务<br/>Recent Memory / Summary / Long-term Memory"]
+  API --> Controller["AgentController<br/>模式决策 / MemoryPolicy / ToolPlan / RAG Strategy"]
+
+  Controller --> Router["Query Router<br/>意图识别 / 复杂度判断 / 策略选择"]
+  Controller --> ToolFlow["工具调用链路<br/>Tool Planner / Tool Registry / MCP / Web Search"]
+  Controller --> Workflow["Agentic RAG Workflow<br/>Decomposition / HyDE / Step-back / Rewrite / Retry"]
+
+  Workflow --> Retrieval["混合检索层<br/>Dense + BM25 + RRF + Rerank"]
+  Retrieval --> Context["上下文增强<br/>Parent Context / Auto-merging / Table Context"]
+  Context --> Generation["答案生成<br/>LLM Gateway / Citation / Optional Grounding"]
+  Generation --> Stream["SSE Streaming<br/>route / step / trace / chunk / result"]
+  Stream --> Frontend
+
+  API --> Observability["可观测层<br/>RAG Trace / Ingestion Report / Phoenix"]
+  API --> Ingestion["文档入库链路<br/>Parser / Cleaner / Chunker / Indexer"]
+
+  Ingestion --> VectorStore["向量库<br/>Chroma / Milvus / pgvector"]
+  Ingestion --> Postgres["PostgreSQL<br/>用户 / 会话 / 消息 / 摘要 / 父子块 / 审计"]
+  Retrieval --> VectorStore
+  Retrieval --> Postgres
+  Memory --> Redis["Redis<br/>最近记忆 / 任务状态 / 缓存"]
+  Memory --> Postgres
+  Auth --> Postgres
+```
+
+### 问答时序
+
+```mermaid
+sequenceDiagram
+  participant U as 用户
+  participant F as Vue 前端
+  participant A as FastAPI
+  participant C as AgentController
+  participant M as MemoryService
+  participant W as RAG Workflow
+  participant R as Hybrid Retrieval
+  participant L as LLM Gateway
+  participant DB as PostgreSQL/Redis
+
+  U->>F: 输入问题
+  F->>A: POST /chat/stream
+  A->>DB: 校验用户与会话归属
+  A->>M: 构建最近记忆、摘要、长期记忆
+  A->>C: 判断执行模式和策略
+  C-->>A: AgentDecision
+  A-->>F: SSE route event
+  A->>W: 启动 Agentic RAG Workflow
+  W->>R: 执行 Dense + BM25 + RRF + Rerank
+  R-->>W: Source Nodes
+  W-->>A: Trace / Quality / Retrieval Result
+  A->>L: 基于上下文流式生成答案
+  L-->>A: token chunks
+  A-->>F: SSE chunk / result / trace
+  A->>DB: 保存消息、来源、引用和 Trace
+```
+
+### 文档入库时序
+
+```mermaid
+flowchart LR
+  Upload["上传文档 / 扫描 docs_dir"] --> Diff["SHA256 Diff<br/>新增 / 更新 / 删除"]
+  Diff --> Parse["解析文件<br/>PDF / DOCX / MD / HTML / TXT"]
+  Parse --> Clean["清洗 blocks<br/>标题 / 正文 / 列表 / 表格"]
+  Clean --> Table["表格处理<br/>跨页合并 / 大表切分"]
+  Table --> Section["构建 Section Documents"]
+  Section --> Chunk["Hierarchical Chunk<br/>root / parent / leaf"]
+  Chunk --> Embed["Leaf Embedding"]
+  Embed --> Vector["写入向量库"]
+  Chunk --> ParentStore["写入 PostgreSQL Parent Store"]
+  Chunk --> BM25["更新 BM25 State"]
+  Diff --> Report["生成 Ingestion Report / Audit Markdown"]
+```
+
+### 数据存储关系
+
+```text
+PostgreSQL
+  users                         用户表
+  chat_sessions                 会话归属
+  chat_messages                 完整消息历史
+  session_summaries             长会话滚动摘要
+  knowledge_documents           知识库文档元数据
+  knowledge_ingest_jobs         入库任务记录
+  audit_logs                    管理操作审计
+  parent/root/leaf chunk store  父子块上下文
+
+Redis
+  recent chat memory            最近对话窗口
+  ingestion job cache           入库任务临时状态
+  lightweight cache             轻量缓存
+
+Vector Store
+  Chroma                        默认本地开发
+  Milvus                        生产化向量服务可选
+  pgvector                      PostgreSQL 向量后端可选
+
+Local data/
+  docs                          本地知识库文档
+  index                         索引、BM25 状态、向量数据
+  audit                         解析报告和审计 Markdown
+```
+
 ## 核心功能
 
 - Agentic RAG Workflow：路由、策略选择、HyDE、Step-back、子问题拆解、Rewrite/Retry。
@@ -147,37 +301,12 @@ root chunk
 - Table Context：增强表格类文档问答效果。
 - Incremental Ingestion：基于 SHA256 的增量入库。
 - Memory System：Redis 最近窗口、PostgreSQL 完整历史、SessionSummary、可选 Mem0。
+- LLM Gateway：统一模型调用、任务级模型配置、timeout 和调用日志。
+- Tool System：工具注册、参数校验、异步执行、MCP/Web Search 扩展点。
 - SSE Streaming：步骤、Trace、答案和引用流式推送。
 - Observability：RAG Trace、Source Node、Ingestion Report、可选 Phoenix。
 - Auth / RBAC：JWT、用户隔离、管理员接口。
 - Frontend：Vue 3 聊天界面、会话列表、知识库管理、调试面板。
-
-## 系统架构
-
-```text
-Vue 3 Frontend
-  -> FastAPI Backend
-  -> Auth / Session / Memory
-  -> AgentController
-  -> Query Router / Tool Planner
-  -> Agentic RAG Workflow
-  -> Hybrid Retrieval
-      -> Vector Retriever
-      -> BM25 Retriever
-      -> RRF Fusion
-      -> Parent Context / Auto-merging / Table Context
-      -> Rerank
-  -> LLM Answer Generation
-  -> Optional Grounding
-  -> SSE Streaming Response
-
-Storage:
-  PostgreSQL: 用户、会话、消息、摘要、父子块、审计日志
-  Redis: 最近记忆、任务状态、轻量缓存
-  Chroma/Milvus/pgvector: 向量索引后端
-```
-
-更详细的设计说明见 [docs/architecture.md](docs/architecture.md)。
 
 ## 技术栈
 
@@ -209,6 +338,8 @@ docs/            架构、排障、实现说明
 docker/          数据库初始化文件
 tests/           单元测试和工作流测试
 ```
+
+更详细的设计说明见 [docs/architecture.md](docs/architecture.md)。
 
 ## 快速开始
 
@@ -362,10 +493,6 @@ uv run phoenix serve
 
 ## 适合展示的面试讲法
 
-如果要用一句话介绍：
-
-> WeiQuiz 是一个企业级 Agentic RAG 知识库问答系统。它不仅实现了文档向量检索和 LLM 回答，还加入了 Query Router、AgentController、混合检索、层级 Chunk、Rerank、多轮记忆、SSE Trace、权限隔离和入库质量报告，重点解决真实 RAG 系统中召回不准、上下文不足、复杂问题拆解、答案幻觉和排障困难的问题。
-
 可以重点展开：
 
 - 为什么选择 RAG，而不是微调。
@@ -383,6 +510,7 @@ uv run phoenix serve
 - 更系统的检索消融实验：dense-only、BM25-only、hybrid、rerank、auto-merging、HyDE、step-back。
 - 更稳定的 OCR 和表格解析能力。
 - 工具调用结果综合生成，而不是直接返回 raw payload。
+- 扩展 Web Search、Memory Search、KB Search、SQL Query、MCP Client 等工具能力。
 - 云端部署示例。
 
 ## 贡献

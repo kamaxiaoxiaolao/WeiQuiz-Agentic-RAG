@@ -1,133 +1,135 @@
-# Architecture
+# 架构说明
 
-WeiQuiz is organized around one goal: make the RAG answer path explainable and easy to improve.
+WeiQuiz 的架构目标很明确：让 RAG 问答链路可解释、可排查、可扩展。
 
-## Request Flow
+它不是把“检索 + 生成”写成一个黑盒函数，而是把用户请求拆成路由、记忆、检索、质量检查、答案生成、引用溯源和 Trace 等多个可观察阶段。
+
+## 请求链路
 
 ```text
-User message
+用户消息
   -> FastAPI /chat/stream
-  -> JWT authentication and session ownership check
-  -> MemoryService builds recent context and session summary
-  -> LongTermMemoryService optionally searches durable memories
-  -> AgentController decides execution mode
-  -> RAG workflow or tool-call workflow
-  -> SSE stream returns route, steps, answer chunks, citations, and trace
-  -> Conversation and metadata are persisted
+  -> JWT 鉴权与会话归属检查
+  -> MemoryService 构建最近上下文和会话摘要
+  -> LongTermMemoryService 可选检索长期记忆
+  -> AgentController 判断执行模式
+  -> RAG Workflow 或 Tool Call Workflow
+  -> SSE 返回 route、step、answer chunk、citation、trace
+  -> 持久化对话内容和元数据
 ```
 
-## Agent Controller
+## AgentController
 
-The controller is the decision layer. It does not retrieve documents or generate the final answer. It returns a structured decision:
+AgentController 是系统的决策层。它不直接检索文档，也不直接生成最终答案，而是返回一个结构化决策：
 
-- `mode`: chitchat, RAG workflow, tool call, or clarification.
-- `route`: intent, method, confidence, strategy, and reason.
-- `memory_policy`: which memory layers should be used.
-- `tool_plan`: optional function-call plan.
-- `rag_strategy`: direct, decomposition, HyDE, step-back, web search, SQL, or chitchat.
-- `need_grounding`: whether to run evidence support checks.
-- `max_retries`: retry budget for rewrite/retrieval.
+- `mode`：闲聊、RAG Workflow、工具调用或澄清。
+- `route`：意图、路由方式、置信度、策略和原因。
+- `memory_policy`：本轮回答应该使用哪些记忆层。
+- `tool_plan`：可选的工具调用计划。
+- `rag_strategy`：direct、decomposition、HyDE、step-back、web search、SQL 或 chitchat。
+- `need_grounding`：是否需要执行答案依据校验。
+- `max_retries`：rewrite / retrieval 的重试预算。
 
-This separation keeps routing decisions testable and prevents the API layer from becoming a large conditional block.
+这种拆分让路由决策可以独立测试，也避免 API 层堆积大量条件判断。
 
 ## RAG Workflow
 
 ```text
 Route
-  -> Optional query transform
-      -> Decomposition for broad or comparative questions
-      -> HyDE for weak semantic queries
-      -> Step-back for abstract background questions
+  -> 可选 Query Transform
+      -> Decomposition：适合宽泛、对比、归纳类问题
+      -> HyDE：适合语义表达较弱、直接检索不稳定的问题
+      -> Step-back：适合需要先抽象背景的问题
   -> Retrieval
-  -> Quality check
-  -> Optional rewrite and retry
-  -> Intermediate synthesis for multi-step paths
-  -> Final answer generation
-  -> Optional grounding
+  -> Quality Check
+  -> 可选 Rewrite / Retry
+  -> 多步路径的 Intermediate Synthesis
+  -> Final Answer Generation
+  -> Optional Grounding
 ```
 
-The workflow emits step events so the frontend can show what happened during a response.
+Workflow 会向 API 层发出步骤事件，前端可以展示每一步发生了什么，方便演示和排查。
 
-## Retrieval Pipeline
+## 检索链路
 
 ```text
 Query
-  -> Dense vector retriever
-  -> Stateful BM25 retriever
-  -> RRF fusion
-  -> Parent context / auto-merging / table context
+  -> Dense Vector Retriever
+  -> Stateful BM25 Retriever
+  -> RRF Fusion
+  -> Parent Context / Auto-merging / Table Context
   -> Rerank
   -> SourceNodePayload
 ```
 
-Dense retrieval improves semantic recall. BM25 improves exact term, code, policy-number, and named-entity recall. RRF avoids directly comparing scores from different retrieval methods. Rerank is used as a second-stage precision pass.
+Dense 检索提升语义召回能力；BM25 提升精确词、编号、配置项、接口名、实体名等召回能力；RRF 避免直接比较不同检索器的分数；Rerank 作为二阶段精排，提高最终上下文相关性。
 
-## Hierarchical Chunking
+## 层级 Chunk
 
-WeiQuiz uses hierarchical nodes:
+WeiQuiz 使用层级节点：
 
-- Root: broad document-level context.
-- Parent: generation-sized context.
-- Leaf: retrieval-sized chunk.
+- Root：更大的文档级上下文。
+- Parent：适合生成阶段使用的上下文。
+- Leaf：适合检索阶段使用的小块。
 
-Leaf nodes are optimized for search precision. Parent and root nodes preserve context for generation. When enough sibling leaf nodes are hit, auto-merging can replace them with a parent-level context block.
+Leaf 节点用于提升检索精度，Parent / Root 节点用于保留生成所需的完整上下文。当同一个 Parent 下足够多的兄弟 Leaf 被命中时，Auto-merging 可以用 Parent 级上下文替代多个零散 Leaf。
 
-## Ingestion Pipeline
+## 文档入库链路
 
 ```text
-Scan docs_dir
+扫描 docs_dir
   -> SHA256 diff
-  -> Parse file into blocks
-  -> Clean and normalize blocks
-  -> Merge or split tables when needed
-  -> Build section documents
-  -> Build hierarchical nodes
-  -> Store leaf nodes in vector backend
-  -> Store parent/root context in PostgreSQL
-  -> Update BM25 state
-  -> Write ingestion report
+  -> 解析文件为 blocks
+  -> 清洗和标准化 blocks
+  -> 必要时合并或切分表格
+  -> 构建 section documents
+  -> 构建 hierarchical nodes
+  -> leaf nodes 写入向量后端
+  -> parent/root context 写入 PostgreSQL
+  -> 更新 BM25 状态
+  -> 写入 ingestion report
 ```
 
-The ingestion report is important for debugging: many RAG failures begin as parsing, chunking, or metadata failures.
+Ingestion report 对排查 RAG 效果非常重要。很多回答不准的问题，根因并不在生成模型，而在文档解析、清洗、分块或 metadata 阶段。
 
-## Memory Layers
+## 记忆层
 
-| Layer | Storage | Purpose |
+| 层级 | 存储 | 作用 |
 | --- | --- | --- |
-| Recent memory | Redis or process fallback | Short-term conversational context |
-| Full history | PostgreSQL | Complete durable audit trail |
-| Session summary | PostgreSQL | Rolling compression for long sessions |
-| Long-term memory | Optional Mem0 | Cross-session user preferences and stable facts |
+| Recent Memory | Redis 或进程内兜底 | 最近对话上下文 |
+| Full History | PostgreSQL | 完整历史和审计回放 |
+| Session Summary | PostgreSQL | 长会话滚动压缩 |
+| Long-term Memory | 可选 Mem0 | 跨会话偏好、目标和稳定事实 |
 
-The answer prompt receives a compact memory context instead of the full message history.
+最终 Prompt 接收的是压缩后的 memory context，而不是完整消息历史。这样可以兼顾多轮上下文和 token 成本。
 
-## API Surface
+## API 分组
 
-Main groups:
+主要接口分组：
 
-- `/auth/*`: register, login, current user.
-- `/chat/stream`: SSE chat response.
-- `/sessions/*`: user session lifecycle.
-- `/documents/*`: upload, reindex, delete, and library view.
-- `/admin/*`: users, audit logs, and overview.
-- `/debug/*`: memory inspection and manual compression helpers.
+- `/auth/*`：注册、登录、当前用户信息。
+- `/chat/stream`：SSE 流式聊天主入口。
+- `/sessions/*`：用户会话生命周期。
+- `/documents/*`：上传、重建索引、删除和知识库列表。
+- `/admin/*`：用户、审计日志和管理概览。
+- `/debug/*`：记忆调试和手动压缩。
 
-## Runtime Services
+## 运行时服务
 
-Local development uses:
+本地开发主要使用：
 
-- FastAPI for backend APIs.
-- Vue/Vite for frontend.
-- PostgreSQL for users, sessions, summaries, audit logs, and parent chunk context.
-- Redis for recent memory and transient job state.
-- Chroma by default for vector storage.
-- Optional Milvus for production-like vector service.
-- Optional Phoenix for tracing.
+- FastAPI：后端 API。
+- Vue / Vite：前端应用。
+- PostgreSQL：用户、会话、摘要、审计日志和 parent chunk context。
+- Redis：最近记忆、临时任务状态和轻量缓存。
+- Chroma：默认本地向量库。
+- Milvus：可选的生产化向量服务。
+- Phoenix：可选 Trace 平台。
 
-## Failure Modes to Inspect
+## 常见故障定位
 
-- Bad answer with good sources: likely generation or grounding prompt issue.
-- Bad answer with bad sources: inspect retrieval, rerank, BM25 state, and query strategy.
-- Empty answer: inspect vector index, embedding config, document ingestion status, and `TOP_K`.
-- Missing context: inspect chunk sizes, parent store, and auto-merging.
-- Wrong user data: inspect auth dependencies and session ownership checks.
+- 答案错但来源正确：优先检查生成 Prompt 或 Grounding 策略。
+- 答案错且来源也错：检查检索、Rerank、BM25 状态和 Query Strategy。
+- 没有答案：检查向量索引、Embedding 配置、文档入库状态和 `TOP_K`。
+- 上下文缺失：检查 chunk size、parent store 和 auto-merging。
+- 用户数据串扰：检查鉴权依赖和 session ownership 校验。
